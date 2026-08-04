@@ -215,7 +215,10 @@ Lo, Datta & Salami (2025, *AI and Ethics*) motivated the TOST framework used her
 partly by observing that "if a fairness criterion is barely met or missed, it is often
 uncertain if it should be a 'pass' or 'failure,' if the sample size is not large" — and
 they demonstrate that when the true metric is near the boundary, statistical power
-drops sharply without large samples (their §4, Figs. 1–2). That is precisely the
+drops sharply without large samples (their §4, Figs. 1–2) — a pattern the companion
+demo repository shows directly: using the same Tango paired TOST and the same ±5 pp
+margin, [n = 100 fails while n = 250 passes](https://github.com/RickPack/gale-shapley-fair-matching-demo#the-verdict-flips-as-the-cohort-shrinks).
+That is precisely the
 situation here: token substitution compresses cosine similarity to a standard deviation
 near 0.003, so the two NLP methods are nearly indistinguishable by text. The effective
 information in the comparison collapses. On real survey responses both methods draw on
