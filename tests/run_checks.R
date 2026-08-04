@@ -13,6 +13,7 @@
 ##   E  fairness metrics
 ##   F  confidence intervals and the benchmark simulation
 ##   G  reproducibility across repeated runs
+##   H  confidentiality and metadata scan (docx author, PNG strings, CSV paths)
 
 suppressPackageStartupMessages({
   library(readr); library(dplyr); library(stringr); library(purrr)
@@ -436,6 +437,84 @@ if (rc == 0) {
 rc3 <- system2("Rscript", "tools/check_palette.R", stdout = FALSE, stderr = FALSE)
 ok("G6 committed figure palettes pass the colour-vision checks", rc3 == 0,
    sprintf("exit %d", rc3))
+
+## ---------------------------------------- H: confidentiality / metadata scan ----
+
+group("H. Confidentiality and metadata scan")
+
+## H1: committed docx files must have empty dc:creator and cp:lastModifiedBy.
+docx_files <- list.files(ART, pattern = "\\.docx$", full.names = TRUE, recursive = FALSE)
+if (length(docx_files) == 0) {
+  ok("H1 no committed docx files to scan", TRUE)
+} else {
+  docx_meta <- vapply(docx_files, function(f) {
+    con <- tryCatch(unz(f, "docProps/core.xml"), error = function(e) NULL)
+    if (is.null(con)) return("no core.xml")
+    xml <- tryCatch({
+      x <- paste(readLines(con, warn = FALSE), collapse = "")
+      try(close(con), silent = TRUE); x
+    }, error = function(e) { try(close(con), silent = TRUE); "" })
+    creator  <- if (grepl("<dc:creator>[^<]+</dc:creator>", xml))
+                  sub(".*<dc:creator>([^<]+)</dc:creator>.*", "\\1", xml) else ""
+    last_mod <- if (grepl("<cp:lastModifiedBy>[^<]+</cp:lastModifiedBy>", xml))
+                  sub(".*<cp:lastModifiedBy>([^<]+)</cp:lastModifiedBy>.*", "\\1", xml) else ""
+    if (nchar(trimws(creator)) == 0 && nchar(trimws(last_mod)) == 0) "" else
+      sprintf("creator='%s' lastModifiedBy='%s'", creator, last_mod)
+  }, character(1))
+  ok("H1 all committed docx files have empty author metadata",
+     all(!nzchar(docx_meta)),
+     if (any(nzchar(docx_meta)))
+       paste(sprintf("%s: %s", basename(docx_files)[nzchar(docx_meta)],
+                     docx_meta[nzchar(docx_meta)]), collapse = "; ")
+     else "")
+}
+
+## H2: committed PNG files must carry no embedded author or path strings.
+png_files <- list.files(ART, pattern = "\\.png$", full.names = TRUE, recursive = FALSE)
+if (length(png_files) == 0) {
+  ok("H2 no committed PNG files to scan", TRUE)
+} else {
+  png_hits <- vapply(png_files, function(f) {
+    sz   <- file.info(f)$size
+    raw_bytes <- readBin(f, "raw", n = min(sz, 65536L))
+    printable  <- raw_bytes[raw_bytes >= as.raw(0x20) & raw_bytes < as.raw(0x7f)]
+    txt <- rawToChar(printable)
+    if (grepl("(?i)(\\bauthor\\b|\\bcreator\\b|\\bartist\\b|copyright|\\busers\\b)", txt, perl = TRUE))
+      "suspicious string found" else ""
+  }, character(1))
+  ok("H2 all committed PNGs carry no author/path metadata",
+     all(!nzchar(png_hits)),
+     if (any(nzchar(png_hits)))
+       paste(basename(png_files)[nzchar(png_hits)], collapse = ", ")
+     else "")
+}
+
+## H3: committed artifact CSVs must contain no absolute user-path strings.
+csv_files <- list.files(ART, pattern = "\\.csv$", full.names = TRUE, recursive = FALSE)
+if (length(csv_files) == 0) {
+  ok("H3 no committed CSV artifacts to scan", TRUE)
+} else {
+  csv_hits <- unlist(lapply(csv_files, function(f) {
+    lines <- readLines(f, warn = FALSE)
+    hits  <- grep("[A-Za-z]:[\\\\/]Users[\\\\/]", lines, value = TRUE)
+    if (length(hits)) sprintf("%s: %s", basename(f), hits[1]) else character(0)
+  }))
+  ok("H3 no absolute user paths in committed artifact CSVs",
+     length(csv_hits) == 0,
+     if (length(csv_hits)) csv_hits[1] else "")
+}
+
+## H4: no committed script or data file contains an absolute user path.
+## (A10 covers scripts; this extends to data/ CSVs which could embed source paths.)
+data_csvs <- list.files(DATA, pattern = "\\.csv$", full.names = TRUE, recursive = FALSE)
+data_hits <- unlist(lapply(data_csvs, function(f) {
+  lines <- readLines(f, warn = FALSE)
+  hits  <- grep("[A-Za-z]:[\\\\/]Users[\\\\/]", lines, value = TRUE)
+  if (length(hits)) sprintf("%s: %s", basename(f), hits[1]) else character(0)
+}))
+ok("H4 no absolute user paths in data/ CSVs",
+   length(data_hits) == 0,
+   if (length(data_hits)) data_hits[1] else "")
 
 ## ---------------------------------------------------------------- summary ----
 
