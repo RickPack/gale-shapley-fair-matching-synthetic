@@ -104,9 +104,11 @@ for (f in input_files) {
 text_values <- text_values[!is.na(text_values) & nzchar(trimws(text_values))]
 if (length(text_values) == 0) stop("No free-text content found in the supplied inputs.")
 
-## Digits are part of a token: the generated vocabulary overflows into term0001,
-## term0002, ... once the 900 stem compounds are exhausted. A letters-only pattern
-## would collapse that entire tail into a single word called "term".
+## Digits are included in the token pattern as a guard against future overflow formats.
+## build_safe_vocab() overflows into letter-only labels (termaaa, termaab, ...) so the
+## digit class is not needed for current data, but a letters-only pattern would have
+## collapsed the old digit-bearing overflow (term0001 -> "term") that was fixed in
+## build_synthetic_inputs.R; keeping [A-Za-z0-9'] is the safer default.
 tokens <- tolower(unlist(str_extract_all(text_values, "[A-Za-z][A-Za-z0-9']*")))
 tokens <- tokens[nzchar(tokens)]
 if (length(tokens) == 0) stop("No word tokens found in the free-text fields.")

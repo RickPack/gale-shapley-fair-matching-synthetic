@@ -200,6 +200,36 @@ The narrow claim these data support: the matching procedure clears the four-fift
 rule for selection-rate parity across grade groups, and fails equivalence testing on
 the distribution of match quality across those same groups.
 
+## Relation to the real-data analysis
+
+Three checks fail here that pass on the real-employee data modelled by this repository
+(Pack, Lo, Salami & Yao, 2026, in preparation for JSM 2026). Understanding why is the
+more informative result.
+
+**Method equivalence.** The pooled 90% CI here is [−0.76, +5.52] pp, upper bound 0.52
+pp beyond the ±5 pp margin. On the real data the same test yields [−1.5, +2.5] pp,
+inside the margin. The mechanism is the cosine degeneracy described in "Stability across
+parameter settings": token substitution compresses cosine similarity to a standard
+deviation near 0.003, so only Matching Words carries genuine NLP variation. Both methods
+do on real text. The +2.38 pp point estimate is directionally consistent with Pack et
+al. (2026); the wide interval is a power problem driven by a near-flat scoring signal,
+not a discrepancy between analyses.
+
+**Mean percentile gap and FOSD.** The −5.65 pp advantage to senior mentees (90% CI
+[−7.14, −4.20]) is roughly 2 pp wider than the corresponding real-data gap, which runs
+near −3.5 pp with |SMD| 0.22 to 0.25 (Pack et al. 2026). Lo, Datta & Salami (2025,
+*AI and Ethics*) developed the TOST-based fairness framework used here. Their treatment
+— fairness checks as uncertain estimates requiring affirmative evidence of tolerance, not
+merely absence of detected difference — is why −5.65 pp earns a Flag rather than a pass
+near the threshold. On real responses the NLP channel partly modulates the grade-weight
+effect: a senior mentee with sparse or poorly matched text still scores lower than a
+junior mentee with strong word overlap. Token substitution removes that modulation. The
+grade weights run unchecked, the gap widens, and FOSD follows it out of tolerance.
+
+Neither failure points to a problem with the method. Both are expected from
+de-identification. The disclosures here follow the same convention as the real-data
+analysis: the gaps are stated and not softened.
+
 ## Data provenance
 
 All inputs are synthetic. `build_synthetic_inputs.R` reads the original workbooks,
@@ -212,7 +242,7 @@ mapping cannot be run backwards.
 
 The figure below shows what survives that process. The vocabulary is manufactured —
 compounds such as `effortapproach` and `contextfield` from a 900-item stem pool, then
-`term0001`-style labels once that pool is exhausted — and it carries the rank-frequency
+letter-only overflow labels (`termaaa`, `termaab`, ...) once that pool is exhausted, and it carries the rank-frequency
 structure of the original text without carrying its content.
 
 ![Synthetic vocabulary word cloud](artifacts/Figure_WordCloud_Synthetic_Vocab.png)
