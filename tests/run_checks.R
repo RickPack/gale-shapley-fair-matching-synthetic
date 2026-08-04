@@ -57,10 +57,12 @@ ok("A1 all synthetic survey CSVs present", all(file.exists(survey_files)),
    paste(basename(survey_files), collapse = ", "))
 ok("A2 all prior-year match CSVs present", all(file.exists(prior_files)))
 
+## affiliation_* rather than business_*: the published fields carry randomly assigned
+## synthetic values and must not use language implying real organizational structure.
 REQUIRED_SURVEY_COLS <- c("display_name", "corp_id", "first_name", "last_name",
                           "what_is_your_grade_level",
                           "would_you_like_to_be_a_mentor_or_a_mentee",
-                          "business_group", "business_unit", "source_year")
+                          "affiliation_group", "affiliation_unit", "source_year")
 
 for (f in survey_files) {
   d <- suppressWarnings(read_csv(f, show_col_types = FALSE, progress = FALSE))
@@ -215,11 +217,20 @@ for (mlabel in unique(pooled$method)) {
      p$k_rank1 == sum(y$k_rank1))
 }
 
-## The pool denominator is never stricter than the pipeline's own percentile
-## denominator, because the pool is at least as large as max(assigned rank).
-ok("C9 pool-based Top-20% is at least the pipeline's own figure",
-   all(per_year$pct_top20_pool >= per_year$pct_top20_repo - 1e-9),
-   "pool denominator >= max observed rank")
+## The two definitions use different cutoffs and neither dominates in general.
+## Pool:  rank <= floor(0.20 * N_pool)
+## Repo:  mentor_percentile <= 20, i.e. rank <= 1 + 0.20 * (max_rank - 1)
+## When max_rank approaches N_pool the repo cutoff is the more permissive of the two,
+## so assert that each rate follows from its own cutoff rather than asserting a
+## direction between them.
+c9 <- all(unlist(Map(function(y, mlabel) {
+  mkey <- if (mlabel == "Cosine Similarity") "cos_sim" else "word_matching"
+  df   <- readRDS(fair_path(mkey, as.integer(y)))
+  row  <- per_year[per_year$year == y & per_year$method == mlabel, ]
+  abs(row$pct_top20_repo - 100 * mean(df$mentor_percentile <= TOP_P)) < 1e-9
+}, per_year$year, per_year$method)))
+ok("C9 the pipeline's own Top-20% rate recomputes from mentor_percentile", c9,
+   "reported alongside the pool-based rate; neither cutoff dominates the other")
 
 ok("C10 number-one rate never exceeds the Top-20% rate",
    all(hl$pct_rank1 <= hl$pct_top20_pool + 1e-9))

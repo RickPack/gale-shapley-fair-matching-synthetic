@@ -35,7 +35,6 @@ required_cols <- c(
   "do_you_prefer_2_2_or_would_you_be_comfortable_mentoring_more_than_one_associate",
   "would_you_consider_yourself_an_extrovert_or_an_introvert",
   "which_personality_type_would_you_prefer_to_be_paired_with",
-  "which_of_the_following_best_describes_you_as_a_person",
   "please_tell_us_in_your_own_words_why_you_want_to_be_a_mentor_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences",
   "are_there_any_special_considerations_that_you_would_like_known_when_your_application_is_reviewed_is_your_desire_to_participate_based_on_certain_criteria_that_you_have_in_mind_that_was_not_covered_in_the_previous_questions_please_list_that_information_here",
   "would_you_prefer_a_mentor_with_your_current_job_role_or_one_above",
@@ -44,9 +43,11 @@ required_cols <- c(
   "what_are_your_expectations_for_this_program_please_choose_your_top_3",
   "would_you_consider_yourself_an_extrovert_or_an_introvert_2",
   "which_personality_type_would_you_prefer_to_be_paired_with_2",
-  "which_of_the_following_best_describes_you_as_a_person_2",
   "please_tell_us_in_your_own_words_why_you_want_to_be_a_mentee_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences",
   "are_there_any_special_considerations_that_you_would_like_known_when_your_application_is_reviewed_is_your_desire_to_participate_based_on_certain_criteria_that_you_have_in_mind_that_was_not_covered_in_the_previous_questions_please_list_that_information_here_2",
+  ## Source-workbook column names. The synthetic outputs rename these to
+  ## affiliation_group / affiliation_unit, because the published data carries no real
+  ## organizational structure and should not use language implying that it does.
   "business_group",
   "business_unit"
 )
@@ -209,8 +210,11 @@ for (yr in survey_years) {
     d[[tc]] <- replace_tokens(as.character(d[[tc]]), word_map)
   }
 
-  d$business_group <- as.character(d$business_group)
-  d$business_unit <- as.character(d$business_unit)
+  ## Read under the source names, publish under neutral ones.
+  d$affiliation_group <- as.character(d$business_group)
+  d$affiliation_unit  <- as.character(d$business_unit)
+  d$business_group <- NULL
+  d$business_unit  <- NULL
 
   ## Organizational fields are REASSIGNED AT RANDOM, not relabelled.
   ##
@@ -234,8 +238,8 @@ for (yr in survey_years) {
                   people_yr)
   unt <- setNames(sprintf("Unit %02d",  sample.int(n_unit_synth,  length(people_yr), replace = TRUE)),
                   people_yr)
-  d$business_group <- unname(grp[d$display_name])
-  d$business_unit  <- unname(unt[d$display_name])
+  d$affiliation_group <- unname(grp[d$display_name])
+  d$affiliation_unit  <- unname(unt[d$display_name])
 
   out_survey <- file.path(data_dir, sprintf("survey_synthetic_%d.csv", yr))
   readr::write_csv(d, out_survey, na = "")

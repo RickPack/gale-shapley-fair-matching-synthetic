@@ -157,10 +157,9 @@ mentor_required_fields <- c(
   "do_you_prefer_2_2_or_would_you_be_comfortable_mentoring_more_than_one_associate",
   "would_you_consider_yourself_an_extrovert_or_an_introvert",
   "which_personality_type_would_you_prefer_to_be_paired_with",
-  "which_of_the_following_best_describes_you_as_a_person",
   "please_tell_us_in_your_own_words_why_you_want_to_be_a_mentor_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences",
-  "business_group",
-  "business_unit"
+  "affiliation_group",
+  "affiliation_unit"
 )
 
 mentee_required_fields <- c(
@@ -171,10 +170,9 @@ mentee_required_fields <- c(
   "what_are_your_expectations_for_this_program_please_choose_your_top_3",
   "would_you_consider_yourself_an_extrovert_or_an_introvert_2",
   "which_personality_type_would_you_prefer_to_be_paired_with_2",
-  "which_of_the_following_best_describes_you_as_a_person_2",
   "please_tell_us_in_your_own_words_why_you_want_to_be_a_mentee_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences",
-  "business_group",
-  "business_unit"
+  "affiliation_group",
+  "affiliation_unit"
 )
 
 ## This changed at some point between 2022-2025, which number was assigned
@@ -268,7 +266,7 @@ more_1_submissions_surv_results <- surv_results %>%
   add_count() %>% 
   dplyr::filter(n > 1) %>% 
   janitor::clean_names()
-# Unsure if 51 (business_group) is needed
+# Unsure if 51 (affiliation_group) is needed
 surv_results_concat <- surv_results %>% 
   select(
     display_name,
@@ -283,7 +281,7 @@ surv_results_concat <- surv_results %>%
     what_are_your_expectations_for_this_program_please_choose_your_top_3,
     please_tell_us_in_your_own_words_why_you_want_to_be_a_mentee_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences,
     are_there_any_special_considerations_that_you_would_like_known_when_your_application_is_reviewed_is_your_desire_to_participate_based_on_certain_criteria_that_you_have_in_mind_that_was_not_covered_in_the_previous_questions_please_list_that_information_here_2,
-    business_group
+    affiliation_group
   )
 
 surv_results_concat_skills_improve <- surv_results_concat %>% 
@@ -383,13 +381,13 @@ surv_results_logical <- surv_results %>%
          personality_pair_mentor, personality_pair_mentee,
          mentor_above_role,
          grade, prefer_mentee_same_BG,
-         business_group) 
+         affiliation_group) 
 
 surv_results_logical_mentor <- surv_results_logical %>% 
   dplyr::filter(mentor_or_mentee == "Mentor") %>% 
   rename(Mentor.Name = display_name,
          grade_mentor = grade,
-         BG_mentor = business_group) %>% 
+         BG_mentor = affiliation_group) %>% 
   select(Mentor.Name, extra_intro_mentor, 
          grade_mentor, 
          prefer_mentee_same_BG,
@@ -399,7 +397,7 @@ surv_results_logical_mentee <- surv_results_logical %>%
   dplyr::filter(mentor_or_mentee == "Mentee") %>% 
   rename(Mentee.Name = display_name,
          grade_mentee = grade,
-         BG_mentee = business_group) %>% 
+         BG_mentee = affiliation_group) %>% 
   select(Mentee.Name, mentor_above_role,
          extra_intro_mentee, 
          grade_mentee, 
@@ -887,15 +885,29 @@ mentor_mentee_alignment <- mentor_mentee_alignment_allvars %>%
   #        -prefer_interaction_type_num) %>% 
   select(-all_of(surv_results_logical_remove))
 
-mentor_mentee_alignment <- mentor_mentee_alignment %>% 
-    mutate(
-      CS_Pred_compatibility = 
-             ((Cosine_Similarity * 100) + 
-                  (u * overall_survey_match_num)),
-      MW_Pred_compatibility = 
-             (MW_count + 
-                (u * overall_survey_match_num))
-    )
+## ── Synthetic-repo deviation from the published paper ────────────────────────
+## Pack et al. (2026) use raw scaling:
+##   CS_Pred = (Cosine_Similarity * 100) + u * overall_survey_match_num
+##   MW_Pred =  MW_count                 + u * overall_survey_match_num
+##
+## This repository replaces the ad-hoc *100 with z-score normalisation:
+##   CS_Pred = z(Cosine_Similarity) + u * z(overall_survey_match_num)
+##   MW_Pred = z(MW_count)          + u * z(overall_survey_match_num)
+##
+## Motivation: even after the overflow-token fix, the survey-match component
+## (driven by the grade weights h=100..125) has ~11x more SD than
+## Cosine_Similarity*100. Z-scoring makes u the explicit relative-weight
+## parameter: u=1.5 means the survey term gets 1.5x the leverage of the NLP
+## term, not ~11x. Rankings and headline figures will differ from the paper.
+## See README "Deviations from the published paper".
+mentor_mentee_alignment <- mentor_mentee_alignment %>%
+  ungroup() %>%
+  mutate(
+    CS_Pred_compatibility =
+      scale(Cosine_Similarity)[, 1] + (u * scale(overall_survey_match_num)[, 1]),
+    MW_Pred_compatibility =
+      scale(MW_count)[, 1]          + (u * scale(overall_survey_match_num)[, 1])
+  )
 # End of Weights section
 ####
 
@@ -2248,8 +2260,12 @@ Summarized here is one common discarded pattern: participants who did not indica
 
 ```{r discarded_participants, include = TRUE, echo = TRUE, eval = params$heavy}
 
-  no_extra_intro <- surv_results_pre_removal %>% 
-    dplyr::filter(is.na(which_of_the_following_best_describes_you_as_a_person) & is.na(which_of_the_following_best_describes_you_as_a_person_2)) 
+  ## Filters on the extrovert/introvert items the surrounding text describes. It
+  ## previously filtered on the personality-description question, which named a
+  ## different item and has since been dropped from the instrument entirely.
+  no_extra_intro <- surv_results_pre_removal %>%
+    dplyr::filter(is.na(would_you_consider_yourself_an_extrovert_or_an_introvert) &
+                  is.na(would_you_consider_yourself_an_extrovert_or_an_introvert_2))
 
 if(nrow(no_extra_intro) > 1) {  
   no_extra_intro_tbl <- no_extra_intro %>% 
@@ -2325,11 +2341,10 @@ stopifnot(
 readr::write_csv(matching_pool, file.path(art_dir_u, sprintf("matching_pool_%s.csv", year)))
 readr::write_csv(matching_pool, file.path(artifacts_dir, sprintf("matching_pool_%d.csv", year)))
 
-## Score-component spread, recorded to explain how much leverage u actually has.
-## A mentee's ranking is driven by CS_Pred_compatibility = Cosine_Similarity * 100 +
-## u * overall_survey_match_num (and MW_count + u * overall_survey_match_num). If the
-## survey-match term varies little relative to the text term, changing u cannot
-## reorder anyone, and the u sweep carries no information.
+## Score-component spread. Records pre-normalisation raw statistics so the
+## natural scale of each component remains auditable. With z-score normalisation
+## every component enters the combined score at SD = 1 (NLP terms) or u * 1
+## (survey-match term), so scaled_sd reflects that rather than a raw multiplier.
 score_cols <- intersect(c("Cosine_Similarity", "MW_count", "overall_survey_match_num"),
                         names(mentor_mentee_alignment))
 if (length(score_cols) > 0) {
@@ -2343,12 +2358,12 @@ if (length(score_cols) > 0) {
     )
   }) %>%
     dplyr::mutate(
-      ## Contribution to score spread: the text term enters as-is (Cosine x 100),
-      ## the survey term enters scaled by u.
+      ## After z-scoring each component has SD=1 in the combined score; the survey
+      ## term is further scaled by u, so its effective SD is u. scaled_sd records
+      ## that effective contribution (not a raw-units multiplier as in the paper).
       scaled_sd = dplyr::case_when(
-        component == "Cosine_Similarity"        ~ sd * 100,
-        component == "overall_survey_match_num" ~ sd * u,
-        TRUE                                    ~ sd
+        component == "overall_survey_match_num" ~ 1 * u,
+        TRUE                                    ~ 1
       )
     )
   readr::write_csv(score_components,

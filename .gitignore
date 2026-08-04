@@ -10,6 +10,7 @@ Output/
 Rplots.pdf
 *.knit.md
 *.utf8.md
+stable_matching_paper_synthetic.html
 
 # --- Logs and dev artifacts ---
 *.log
