@@ -16,6 +16,7 @@ stable_matching_paper_synthetic.html
 *.log
 render_three_years_u110.R
 force_rerender_all.R
+audit_report.txt
 
 # --- Source workbooks (confidential; must never be committed) ---
 # The synthetic pipeline reads only these paths via GS_SOURCE_ROOT.
