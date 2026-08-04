@@ -1,0 +1,13 @@
+year,grade_group,method,n,n_positive,selection_rate_pct
+2023,Grades 1–4,Cosine Similarity,140,120,85.71
+2023,Grades 1–4,Matching Words,140,115,82.14
+2023,Grades 5+,Cosine Similarity,57,47,82.46
+2023,Grades 5+,Matching Words,57,48,84.21
+2024,Grades 1–4,Cosine Similarity,207,190,91.79
+2024,Grades 1–4,Matching Words,207,190,91.79
+2024,Grades 5+,Cosine Similarity,80,75,93.75
+2024,Grades 5+,Matching Words,80,75,93.75
+2025,Grades 1–4,Cosine Similarity,70,59,84.29
+2025,Grades 1–4,Matching Words,70,54,77.14
+2025,Grades 5+,Cosine Similarity,37,35,94.59
+2025,Grades 5+,Matching Words,37,32,86.49

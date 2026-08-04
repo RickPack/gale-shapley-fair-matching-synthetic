@@ -1,0 +1,7 @@
+u,id,check,role,threshold,estimate,interval,outcome
+1.5,1,Disparate Impact (four-fifths rule),Binding gate,DI 90% lower bound >= 0.80,DI = 0.974,"90% CI [0.939, 0.997]",Pass
+1.5,2,"Mean percentile gap, TOST equivalence",Binding gate,90% CI within +/-3 pp,gap = -2.28 pp,"90% CI [-3.86, -0.59]",Flag
+1.5,3,"FOSD equivalence, TOST (margin 0.10)",Binding gate,sup 90% upper <= 0.10 and inf 90% lower >= -0.10,"sup = 0.141, inf = -0.004",sup 90% U = 0.198; inf 90% L = -0.028,Flag
+1.5,4,"FOSD equivalence, strict sensitivity (0.05)",Sensitivity,sup 90% upper <= 0.05 and inf 90% lower >= -0.05,"sup = 0.141, inf = -0.004",sup 90% U = 0.198; inf 90% L = -0.028,Flag
+1.5,5,Standardised mean difference,Supportive (not a gate),|SMD| <= 0.30,SMD = -0.139,point estimate only,Pass
+1.5,6,"Fisher exact test, grade group x positive",Supportive (not a gate),"reported, not thresholded",p = 2.81e-01,exact test,Reported

@@ -1,0 +1,5 @@
+Year,n_Cosine,Rate_Cosine,n_MW,Rate_MW,Delta_rate_cos_minus_mw,CI_L_90pct,CI_U_90pct,p_value,Equiv_primary_delta5pp,Equiv_strict_delta2pp
+2023,197,0.8477,197,0.8274,0.0203,-0.0408,0.0814,0.2121,Fail,Fail
+2024,287,0.9233,287,0.9233,0,-0.0365,0.0365,0.0122,Pass,Fail
+2025,107,0.8785,107,0.8037,0.0748,-0.007,0.1565,0.6908,Fail,Fail
+Overall,591,0.89,591,0.8697,0.0203,-0.0108,0.0514,0.0581,Fail,Fail

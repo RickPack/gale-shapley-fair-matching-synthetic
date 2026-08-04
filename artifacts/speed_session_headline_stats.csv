@@ -1,0 +1,9 @@
+year,method,n_mentees,pct_top20,pct_rank1_mentor,mean_percentile
+2023,Cosine Similarity,197,84.8,24.4,9.67
+2023,Matching Words,197,82.7,15.2,11.33
+2024,Cosine Similarity,287,92.3,28.2,6.51
+2024,Matching Words,287,92.3,29.3,6.43
+2025,Cosine Similarity,107,87.9,43.9,9.79
+2025,Matching Words,107,80.4,39.3,13.26
+Overall,Cosine Similarity,591,89,29.8,8.16
+Overall,Matching Words,591,87,26.4,9.3

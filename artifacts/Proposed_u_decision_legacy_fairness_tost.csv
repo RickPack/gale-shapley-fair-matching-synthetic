@@ -1,0 +1,2 @@
+u,decision,note
+NA,No u in grid satisfies all fairness rules,Consider widening thresholds or inspecting CI plots manually.
