@@ -1,0 +1,69 @@
+# --- R / RStudio ---
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# --- Rendered outputs (regenerate locally with run_all_synthetic.r) ---
+Output/
+Rplots.pdf
+*.knit.md
+*.utf8.md
+
+# --- Logs and dev artifacts ---
+*.log
+render_three_years_u110.R
+force_rerender_all.R
+
+# --- Source workbooks (confidential; must never be committed) ---
+# The synthetic pipeline reads only these paths via GS_SOURCE_ROOT.
+# Nothing under the source-workbook root should ever be committed.
+source_workbooks/
+GS_SOURCE_ROOT/
+
+# --- Claude Code local config ---
+# Session-local settings and slash commands; not part of the published analysis.
+.claude/
+# Agent instructions referencing the private parent folder; not for publication.
+CLAUDE.md
+
+# --- Bulk intermediate artifacts (regenerate with run_all_synthetic.r) ---
+# ~360 per-u .rds files. They recreate byte-for-byte from data/*.csv, so the
+# repository documents the regeneration rather than carrying the bulk.
+artifacts/u_*/
+# Manuscript feed for the private paper folder, not part of this deliverable.
+# It also records an absolute artifacts path from the machine that produced it.
+artifacts/paper_feed.json
+
+# --- Pipeline diagnostic figures ---
+# These predate the light/dark, README-width figure standards documented in the
+# README and are regenerated locally by run_all_synthetic.r. Only the two figures
+# validated by tools/check_palette.R are committed.
+artifacts/Figure_1_Cumulative_Gains.png
+artifacts/Figure_2_Density_Cos_Sim.png
+artifacts/Figure_3_Density_Word_Matching.png
+artifacts/Figure_4_Percentiles_Density_By_Year.png
+artifacts/Figure_6_Selection_Rates_By_Grade_Group.png
+artifacts/Figure_u_sweep_*.png
+artifacts/ECDF_FOSD_*.png
+
+# --- Scratch output folders from ad hoc renders ---
+artifacts_timing/
+artifacts_pool/
+
+# --- Build output ---
+Gale_Synthetic_publish.zip
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Python virtual environments (if any coexist) ---
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc

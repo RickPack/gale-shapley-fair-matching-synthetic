@@ -1,0 +1,39 @@
+Audit Report
+Date: 2026-08-03
+Scope: the Gale_Synthetic repository and its subfolders
+
+What was checked
+- End-to-end run of run_all_synthetic.r
+- Presence of synthetic data, Output HTML files, and artifacts
+- Residual branded strings in source files and synthetic CSVs
+- Survey-response intake and exclusion logic in stable_matching_paper_synthetic.rmd
+
+Run verification
+- run_all_synthetic.r completed successfully with EXIT_CODE=0 in the latest verification run.
+- Output contains 36 HTML files: 3 years x 12 u values.
+- artifacts includes paper_feed.json, Proposed_u_decision.csv, fairness summaries, and speed-session summary CSVs.
+
+Branding and identifier scan
+- No branded filenames remain inside Gale_Synthetic.
+- No direct personal names or email addresses were found in the synthetic CSVs during spot scans.
+- A raw '@' character was found in at least one synthetic free-text field, but it appeared as punctuation embedded in synthetic token text rather than as an email address.
+- The verification log recorded the generating machine's folder path, which includes an organization name. That log is not part of this repository and is excluded by .gitignore.
+
+Survey completion logic
+- The code does discard some incomplete responses, but not by enforcing completion of every substantive survey question.
+- In the intake block, a response is removed immediately if it is marked as an import row, lacks first/last name, or lacks the mentor/mentee indicator.
+- After de-duplication, a response is kept only if at least one of the two personality-description fields is present and the mentor/mentee value is Mentor or Mentee.
+- The two anything-to-add / special-considerations fields are not required for inclusion. They are treated as optional text and contribute only to de-duplication and matching text when present.
+- Therefore, the code does not currently implement the stricter rule: keep responders only if they completed all questions except the anything-to-add item.
+
+Assessment
+- The synthetic pipeline is operational and stays contained within Gale_Synthetic and its subfolders.
+- The de-identification approach is working at the level requested for names, business labels, and public-safe synthetic CSV creation.
+- The response-completeness rule is looser than a full-survey-completion rule. This is a behavior confirmation, not a newly introduced defect.
+
+Files most relevant to this audit
+- stable_matching_paper_synthetic.rmd
+- build_synthetic_inputs.R
+- run_all_synthetic.r
+- artifacts/speed_session_headline_stats.csv
+- artifacts/speed_session_method_tost.csv

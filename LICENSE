@@ -1,0 +1,14 @@
+Copyright (c) 2026 Held but not communicated
+
+TODO: Replace this placeholder with the license text you intend to publish under.
+
+Common choices for research/code:
+  - MIT License                 (permissive, minimal restrictions)
+  - Apache License 2.0          (permissive, includes patent grant)
+  - BSD 3-Clause License        (permissive)
+  - CC-BY-4.0                   (best for documents/figures, not code)
+  - GPL-3.0 / AGPL-3.0          (copyleft)
+
+Replace this file's contents with the full text of your chosen license
+(available at https://spdx.org/licenses/ ), fill in the <YEAR> and
+<COPYRIGHT HOLDER> fields, and remove this notice.

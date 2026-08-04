@@ -1,0 +1,2358 @@
+---
+title: "Synthetic Mentoring Pairing by Gale-Shapley Algorithm - `r params$year`"
+author: "Synthetic Analysis"
+date: "`r Sys.Date()`"
+params:
+  year: 2023
+  u: 0.90         # weight on overall_survey_match_num
+  heavy: false    # run time-expensive chunks?
+  artifacts_dir: "artifacts"  # <— NEW: base output folder (runner will create subfolders per u)
+  seed: 88        # RNG seed: mentor-duplication sampling and score-tie jitter
+output:
+  html_document:
+    code_folding: "hide"
+    toc: yes
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 1800px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+# Data Setup for this HTML 
+
+This Rmd can also be rendered independently for a single synthetic input year instead of running the full batch script.
+
+Standalone render steps:
+1. Set the working directory to this `Gale_Synthetic` folder.
+2. Make sure `data/survey_synthetic_YYYY.csv` and `data/prior_year_matches_synthetic_YYYY-1.csv` already exist for the year you want.
+3. Render with parameters similar to:
+
+```r
+rmarkdown::render(
+  input = "stable_matching_paper_synthetic.rmd",
+  output_file = "Output/stable_matching_2023_u1p100.html",
+  params = list(
+    year = 2023,
+    u = 1.10,
+    heavy = FALSE,
+    artifacts_dir = "artifacts"
+  )
+)
+```
+
+If the synthetic CSV inputs do not exist yet, run `build_synthetic_inputs.R` or `run_all_synthetic.r` first.
+
+```{r package_function_load, include = FALSE, cache = FALSE, warning = FALSE, message = FALSE}
+paper_version <- TRUE
+if (!exists("params") || is.null(params$year)) {
+  stop("params$year is not set. Did you pass params = list(year = ...) to render?")
+}
+year <- params$year
+
+# Multiplier by overall_survey_match_num added to cosine_similiarity or word_matching
+u <- if (!is.null(params$u)) params$u else 0.25
+artifacts_dir <- if (!is.null(params$artifacts_dir)) params$artifacts_dir else "artifacts"
+
+u_tag <- gsub("\\.", "p", sprintf("%.3f", u))   # e.g., 0.175 -> "0p175", 0.150 -> "0p150"
+art_dir_u <- file.path(artifacts_dir, paste0("u_", u_tag))
+dir.create(art_dir_u, showWarnings = FALSE, recursive = TRUE)
+
+message("Setup: using year = ", year, " and u = ", u)
+
+# Estimated it would take a month to pair.
+# Eliminate stopwords
+# Previous algorithm: too close in BG or previous mentor
+# New table: Show where multiple mentees per mentor
+# Feedback: occasional challenge like person no-show or 
+# Show where match is the same.
+# Note this can easily cause a mentor:mentee match to rank worse, so a pairing does not occur.
+
+## Number of Matching Words
+## https://stackverflow.com/a/62031699/2305061
+## Seed governs mentor-duplication sampling and the uniform jitter that breaks
+## predicted-compatibility ties. Default 88 reproduces the committed artifacts.
+run_seed <- if (!is.null(params$seed)) as.integer(params$seed) else 88L
+set.seed(run_seed)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 12, fig.height = 8) 
+
+
+if (require('pacman') == FALSE) {
+  stop("Need to install pacman package with install.packages('pacman'), dependencies = TRUE")
+}
+
+indir  <- normalizePath('.', winslash = '/', mustWork = TRUE)
+data_dir <- file.path(indir, 'data')
+outdir <- file.path(indir, 'Output')
+dir.create(outdir, showWarnings = FALSE)
+
+pacman::p_load(dplyr, matchingR, openxlsx, textTinyR, stopwords, stringr, rmarkdown,
+               tidyr, kableExtra, reactable, ggpubr, tidytext, forcats,
+               extrafont, correlation, tibble)
+
+select <- dplyr::select
+filter <- dplyr::filter
+
+# No longer needed?
+# extrafont::loadfonts(device = "all", quiet = TRUE)
+
+if(!exists('year')) {
+  years <- 2023
+}
+
+if(!exists('mod_mentee')) {
+  mod_mentee <- 0.25
+}
+
+jaccard <- function(a, b) {
+    intersection = length(intersect(a, b))
+    union = length(a) + length(b) - intersection
+    return (intersection/union)
+}
+## Unordered list - https://stackoverflow.com/questions/52335498/convert-list-object-to-unordered-list-in-markdown/52335934#52335934
+catList <- function(inputList) {
+    cat(gsub("^!omap\n|:", "", yaml::as.yaml(inputList, omap = TRUE)))
+}
+```
+
+```{r base_1, include = TRUE, echo = TRUE, cache = FALSE, warning = FALSE, message = FALSE}
+## Only this file changes
+surv_results0 <- readr::read_csv(file.path(data_dir, paste0('survey_synthetic_', year, '.csv')), show_col_types = FALSE)
+
+surv_results0 <- surv_results0[, !grepl("BALLOT", toupper(names(surv_results0)))]
+
+## Print questions <=7 unique responses, many being the multiple choice survey questions
+# survey_questions_multiple_choice <- 
+#   surv_results0[sapply(surv_results0, function(x) length(unique(x)) <= 7)]
+# for(col_name in names(survey_questions_multiple_choice)) {
+#   cat("\nQuestion:", col_name, "\n")
+#   unique_responses <- unique(survey_questions_multiple_choice[[col_name]])
+#   cat("Responses:", paste(unique_responses, collapse = ", "),
+#       "\n")
+#   readline(prompt = "Press Enter to continue...")
+# }
+
+surv_results0 <- janitor::clean_names(surv_results0)
+if ("display_name" %in% names(surv_results0)) {
+  surv_results0$display_name <- toupper(surv_results0$display_name)
+}
+
+is_answered <- function(x) {
+  if (is.character(x)) {
+    !is.na(x) & nzchar(stringr::str_trim(x))
+  } else {
+    !is.na(x)
+  }
+}
+
+mentor_required_fields <- c(
+  "what_is_your_grade_level",
+  "would_you_prefer_a_mentee_within_your_business_unit_group",
+  "what_are_your_strongest_skills_please_choose_your_top_3",
+  "what_topics_are_you_knowledgeable_on_please_choose_your_top_3",
+  "which_expectations_can_you_help_fulfill_please_choose_your_top_3",
+  "do_you_prefer_2_2_or_would_you_be_comfortable_mentoring_more_than_one_associate",
+  "would_you_consider_yourself_an_extrovert_or_an_introvert",
+  "which_personality_type_would_you_prefer_to_be_paired_with",
+  "which_of_the_following_best_describes_you_as_a_person",
+  "please_tell_us_in_your_own_words_why_you_want_to_be_a_mentor_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences",
+  "business_group",
+  "business_unit"
+)
+
+mentee_required_fields <- c(
+  "what_is_your_grade_level",
+  "would_you_prefer_a_mentor_with_your_current_job_role_or_one_above",
+  "what_skills_would_you_like_to_improve_please_choose_your_top_3",
+  "what_topics_are_you_interested_in_please_choose_your_top_3",
+  "what_are_your_expectations_for_this_program_please_choose_your_top_3",
+  "would_you_consider_yourself_an_extrovert_or_an_introvert_2",
+  "which_personality_type_would_you_prefer_to_be_paired_with_2",
+  "which_of_the_following_best_describes_you_as_a_person_2",
+  "please_tell_us_in_your_own_words_why_you_want_to_be_a_mentee_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences",
+  "business_group",
+  "business_unit"
+)
+
+## This changed at some point between 2022-2025, which number was assigned
+##   to column of same name
+names(surv_results0) <- gsub("_1", "_2", names(surv_results0))
+
+surv_results_pre_removal <- surv_results0 %>% 
+  filter(!grepl("IMPORT", .[[1]], ignore.case = TRUE)) %>% 
+  dplyr::filter(!is.na(recipient_last_name) & !is.na(recipient_first_name)) %>% 
+  dplyr::filter(!is.na(would_you_like_to_be_a_mentor_or_a_mentee)) %>% 
+  mutate(display_name =
+    case_when(is.na(display_name) ~ str_trim(
+      paste(toupper(first_name), toupper(last_name))),
+      TRUE ~ display_name)
+    ) %>% 
+  group_by(display_name,    
+           would_you_like_to_be_a_mentor_or_a_mentee) %>% 
+  mutate(free_text_responses_number_of_characters = sum(
+           nchar(please_tell_us_in_your_own_words_why_you_want_to_be_a_mentee_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences),
+           nchar(please_tell_us_in_your_own_words_why_you_want_to_be_a_mentor_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences),
+           nchar(are_there_any_special_considerations_that_you_would_like_known_when_your_application_is_reviewed_is_your_desire_to_participate_based_on_certain_criteria_that_you_have_in_mind_that_was_not_covered_in_the_previous_questions_please_list_that_information_here),
+           nchar(are_there_any_special_considerations_that_you_would_like_known_when_your_application_is_reviewed_is_your_desire_to_participate_based_on_certain_criteria_that_you_have_in_mind_that_was_not_covered_in_the_previous_questions_please_list_that_information_here_2), 
+           na.rm = TRUE)) %>% 
+  slice(which.max(free_text_responses_number_of_characters)) %>% 
+  mutate(
+    mentor_required_complete = dplyr::if_else(
+      toupper(would_you_like_to_be_a_mentor_or_a_mentee) == "MENTOR",
+      dplyr::if_all(dplyr::all_of(mentor_required_fields), is_answered),
+      FALSE
+    ),
+    mentee_required_complete = dplyr::if_else(
+      toupper(would_you_like_to_be_a_mentor_or_a_mentee) == "MENTEE",
+      dplyr::if_all(dplyr::all_of(mentee_required_fields), is_answered),
+      FALSE
+    ),
+    required_response_complete = mentor_required_complete | mentee_required_complete
+  ) %>%
+  ungroup()
+
+# surv_results_pre_removal used in chunk: "Discarded participants' summary (lack of data)" 
+surv_results <- surv_results_pre_removal %>% 
+  dplyr::filter(required_response_complete) %>% 
+  dplyr::filter(toupper(would_you_like_to_be_a_mentor_or_a_mentee) %in% 
+                  c('MENTOR','MENTEE')) %>%
+  dplyr::select(-mentor_required_complete, -mentee_required_complete)
+
+required_completion_exclusions <- surv_results_pre_removal %>%
+  dplyr::filter(toupper(would_you_like_to_be_a_mentor_or_a_mentee) %in% c("MENTOR", "MENTEE")) %>%
+  dplyr::transmute(
+    year = year,
+    role = stringr::str_to_title(would_you_like_to_be_a_mentor_or_a_mentee),
+    required_response_complete = required_response_complete
+  ) %>%
+  dplyr::group_by(year, role) %>%
+  dplyr::summarise(
+    considered_after_identity_gate = dplyr::n(),
+    excluded_required_completion = sum(!required_response_complete, na.rm = TRUE),
+    retained_after_completion_gate = sum(required_response_complete, na.rm = TRUE),
+    excluded_required_completion_pct = round(
+      100 * excluded_required_completion / considered_after_identity_gate,
+      1
+    ),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(role)
+
+## Prior year pairings for repeat-match penalty.
+last_year_results <- readr::read_csv(
+  file.path(data_dir, paste0('prior_year_matches_synthetic_', year - 1, '.csv')),
+  show_col_types = FALSE
+) %>% 
+  janitor::clean_names() %>% 
+  rename(mentor_name = gale_shapley_matched_mentor_name) %>% 
+  distinct(mentee_name, mentor_name)
+
+## https://stackoverflow.com/a/65409450/2305061
+## Counts unique word matches
+numwords <- function(str1, str2) {
+  mapply(function(x, y) length(intersect(x, y)), 
+         strsplit(str1, ' '), strsplit(str2, ' '))
+}
+
+matchwords <- function(str1, str2) {
+  mapply(function(x, y) paste0(intersect(x, y),collapse = " "), 
+         strsplit(str1, ' '), strsplit(str2, ' '))
+}
+
+## checking for best de-duplication when mentor/mentee submits > 1
+more_1_submissions_surv_results <- surv_results %>% 
+  group_by(display_name, would_you_like_to_be_a_mentor_or_a_mentee) %>% 
+  add_count() %>% 
+  dplyr::filter(n > 1) %>% 
+  janitor::clean_names()
+# Unsure if 51 (business_group) is needed
+surv_results_concat <- surv_results %>% 
+  select(
+    display_name,
+    mentor_or_mentee = would_you_like_to_be_a_mentor_or_a_mentee,
+    what_are_your_strongest_skills_please_choose_your_top_3,
+    what_topics_are_you_knowledgeable_on_please_choose_your_top_3,
+    which_expectations_can_you_help_fulfill_please_choose_your_top_3,
+    please_tell_us_in_your_own_words_why_you_want_to_be_a_mentor_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences,
+    are_there_any_special_considerations_that_you_would_like_known_when_your_application_is_reviewed_is_your_desire_to_participate_based_on_certain_criteria_that_you_have_in_mind_that_was_not_covered_in_the_previous_questions_please_list_that_information_here,
+    what_skills_would_you_like_to_improve_please_choose_your_top_3,
+    what_topics_are_you_interested_in_please_choose_your_top_3,
+    what_are_your_expectations_for_this_program_please_choose_your_top_3,
+    please_tell_us_in_your_own_words_why_you_want_to_be_a_mentee_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences,
+    are_there_any_special_considerations_that_you_would_like_known_when_your_application_is_reviewed_is_your_desire_to_participate_based_on_certain_criteria_that_you_have_in_mind_that_was_not_covered_in_the_previous_questions_please_list_that_information_here_2,
+    business_group
+  )
+
+surv_results_concat_skills_improve <- surv_results_concat %>% 
+  rename(
+    mentor_skills_offer = what_are_your_strongest_skills_please_choose_your_top_3,
+    mentee_skills_improve = what_skills_would_you_like_to_improve_please_choose_your_top_3
+  ) %>% 
+  select(mentor_skills_offer, mentee_skills_improve,
+         display_name, mentor_or_mentee)
+
+surv_results_concat_skills_improve_mentor <-
+  surv_results_concat_skills_improve %>% 
+  dplyr::filter(mentor_or_mentee == "Mentor") %>% 
+  rename(Mentor.Name = display_name) %>% 
+  select(Mentor.Name, mentor_skills_offer) %>% 
+  mutate(dummy = 1)
+
+surv_results_concat_skills_improve_mentee <-
+  surv_results_concat_skills_improve %>% 
+  dplyr::filter(mentor_or_mentee == "Mentee") %>% 
+  rename(Mentee.Name = display_name) %>% 
+  select(Mentee.Name, mentee_skills_improve) %>% 
+  mutate(dummy = 1)
+
+## Used only in mentee-specific adjustment - 4pivot_mentee data frames
+surv_results_concat_skills_improve_mentor_Matching_Words <- 
+  full_join(surv_results_concat_skills_improve_mentor,
+            surv_results_concat_skills_improve_mentee,
+            multiple = 'all') %>% 
+  mutate(
+    mentor_skills_match =
+             numwords(
+                        str_replace_all(
+                         str_replace_all(toupper(mentor_skills_offer), "[:space:]+", ""),
+                         "[,]",
+                         " "),
+                        str_replace_all(
+                         str_replace_all(toupper(mentee_skills_improve), "[:space:]+", ""),
+                         "[,]",
+                         " ")
+             )
+  ) %>% 
+  select(Mentor.Name, Mentee.Name, mentor_skills_match)
+
+more_1_submissions_surv_results_concat <- 
+  inner_join(surv_results_concat,
+             more_1_submissions_surv_results %>% 
+               distinct(display_name,    
+                        would_you_like_to_be_a_mentor_or_a_mentee)
+             )
+
+if (nrow(more_1_submissions_surv_results_concat) > 0) {
+  # Legacy duplicate-submission completeness diagnostics intentionally disabled.
+  # Repaired reference version kept below for future reactivation if needed.
+  # more_1_submissions_surv_results_concat_mentor <-
+  #   more_1_submissions_surv_results_concat %>%
+  #   dplyr::filter(would_you_like_to_be_a_mentor_or_a_mentee == "Mentor")
+  # more_1_submissions_surv_results_concat_mentee <-
+  #   more_1_submissions_surv_results_concat %>%
+  #   dplyr::filter(would_you_like_to_be_a_mentor_or_a_mentee == "Mentee")
+  #
+  # mentor_complete_cols <- colSums(is.na(more_1_submissions_surv_results_concat_mentor)) == 0
+  # mentee_complete_cols <- colSums(is.na(more_1_submissions_surv_results_concat_mentee)) == 0
+  # more_1_submissions_surv_results_concat_mentor <-
+  #   more_1_submissions_surv_results_concat_mentor[, mentor_complete_cols, drop = FALSE]
+  # more_1_submissions_surv_results_concat_mentee <-
+  #   more_1_submissions_surv_results_concat_mentee[, mentee_complete_cols, drop = FALSE]
+  #
+  # max_chars_more_1_submissions_surv_results0 <-
+  #   apply(
+  #     X = more_1_submissions_surv_results_concat_mentor,
+  #     MARGIN = 2,
+  #     FUN = function(x) max(nchar(as.character(x)), na.rm = TRUE)
+  #   )
+  more_1_submissions_surv_results_concat_mentor <- data.frame()
+  more_1_submissions_surv_results_concat_mentee <- data.frame()
+  max_chars_more_1_submissions_surv_results0    <- data.frame()
+} else {
+  more_1_submissions_surv_results_concat_mentor <- data.frame()
+  more_1_submissions_surv_results_concat_mentee <- data.frame()
+  max_chars_more_1_submissions_surv_results0    <- data.frame()
+}
+
+surv_results_logical <- surv_results %>% 
+  rename(
+    mentor_or_mentee = would_you_like_to_be_a_mentor_or_a_mentee,
+    grade = what_is_your_grade_level,
+    prefer_mentee_same_BG = would_you_prefer_a_mentee_within_your_business_unit_group,
+    extra_intro_mentor = would_you_consider_yourself_an_extrovert_or_an_introvert,
+    extra_intro_mentee = would_you_consider_yourself_an_extrovert_or_an_introvert_2,
+    personality_pair_mentor = which_personality_type_would_you_prefer_to_be_paired_with,
+    mentor_above_role = would_you_prefer_a_mentor_with_your_current_job_role_or_one_above,
+    personality_pair_mentee = which_personality_type_would_you_prefer_to_be_paired_with_2
+  ) %>% 
+  select(display_name, mentor_or_mentee, 
+         extra_intro_mentee, extra_intro_mentor,
+         personality_pair_mentor, personality_pair_mentee,
+         mentor_above_role,
+         grade, prefer_mentee_same_BG,
+         business_group) 
+
+surv_results_logical_mentor <- surv_results_logical %>% 
+  dplyr::filter(mentor_or_mentee == "Mentor") %>% 
+  rename(Mentor.Name = display_name,
+         grade_mentor = grade,
+         BG_mentor = business_group) %>% 
+  select(Mentor.Name, extra_intro_mentor, 
+         grade_mentor, 
+         prefer_mentee_same_BG,
+         personality_pair_mentor, BG_mentor) 
+
+surv_results_logical_mentee <- surv_results_logical %>% 
+  dplyr::filter(mentor_or_mentee == "Mentee") %>% 
+  rename(Mentee.Name = display_name,
+         grade_mentee = grade,
+         BG_mentee = business_group) %>% 
+  select(Mentee.Name, mentor_above_role,
+         extra_intro_mentee, 
+         grade_mentee, 
+         personality_pair_mentee, BG_mentee)
+
+multiple_mentee_mentors0 <- surv_results %>% 
+  select(
+    display_name,
+    mentor_or_mentee = would_you_like_to_be_a_mentor_or_a_mentee,
+    more_1_mentee = do_you_prefer_2_2_or_would_you_be_comfortable_mentoring_more_than_one_associate
+  ) %>% 
+  dplyr::filter(mentor_or_mentee == "Mentor") %>% 
+  dplyr::filter(!more_1_mentee %in% c('1 mentee',"",NA)) %>% 
+  rename(Mentor.Name = display_name)
+
+multiple_mentee_mentors <- multiple_mentee_mentors0 %>% 
+  select(-2)
+
+# Legacy capacity summary retained as a repaired comment only; unused downstream.
+# multiple_mentee_mentors_max <- if (nrow(multiple_mentee_mentors) == 0) {
+#   1
+# } else {
+#   max(
+#     as.numeric(str_extract(multiple_mentee_mentors$more_1_mentee, "\\d+")),
+#     na.rm = TRUE
+#   )
+# }
+
+concat_cols <- setdiff(colnames(surv_results_concat),
+                       c("display_name","mentor_or_mentee"))
+
+concat_cols_freetext_only <- c("a")
+
+mentor_in0_prep <- surv_results_concat %>% 
+  dplyr::filter(mentor_or_mentee == "Mentor") %>% 
+  select(-2)
+
+mentor_in0 <- mentor_in0_prep %>% 
+  tidyr::unite("mentor_concatenated_responses", all_of(concat_cols), sep = " ", na.rm = TRUE) %>% 
+  mutate(
+    mentor_concatenated_responses = 
+      str_replace_all(mentor_concatenated_responses, "[-,/]", " "),           
+    mentor_concatenated_responses = 
+      str_replace_all(
+        str_replace_all(toupper(mentor_concatenated_responses), "[^A-Z /]", " "),
+                         "[:space:]+",
+                         " "),
+    mentor_concatenated_responses = 
+      str_replace_all(mentor_concatenated_responses," NA ", ""))
+
+mentor_in_base <- mentor_in0 %>%
+  mutate_if(is.character, str_trim) %>%
+  rename(Mentor.Name = display_name)
+##### Mentee ----
+mentee_in0_prep <- surv_results_concat %>% 
+  dplyr::filter(mentor_or_mentee == "Mentee") %>% 
+  select(-2)
+
+mentee_in0 <- mentee_in0_prep %>% 
+  tidyr::unite("mentee_concatenated_responses", all_of(concat_cols), sep = " ", na.rm = TRUE) %>% 
+  mutate(
+    mentee_concatenated_responses = 
+      str_replace_all(mentee_concatenated_responses, "[-,/]", " "),           
+    mentee_concatenated_responses = 
+      str_replace_all(
+        str_replace_all(toupper(mentee_concatenated_responses), "[^A-Z /]", " "),
+                         "[:space:]+",
+                         " "),
+    mentee_concatenated_responses = 
+      str_replace_all(mentee_concatenated_responses," NA ", ""))
+
+mentee_in1 <- left_join(mentee_in0, last_year_results %>% 
+                          distinct(mentee_name, mentor_name),
+                        by = c('display_name' = 'mentee_name'))
+
+mentee_in_base <- mentee_in1 %>%
+  rename(Matched_mentor_last_year = mentor_name,
+                       Mentee.Name = display_name) %>%
+  mutate_if(is.character, str_trim)
+
+mentor_starter_rows <- nrow(mentor_in_base)
+mentor_multiple_mentee_rows <- nrow(multiple_mentee_mentors)
+mentee_starter_rows <- nrow(mentee_in_base)
+
+## Mentor:Mentee imbalance resolution ----
+
+if (mentor_starter_rows > mentee_starter_rows) {
+  ## if more mentors than mentees, no change and allowing Gale-Shapley to leave some unmatched
+  mentee_in          <- mentee_in_base
+  mentor_in          <- mentor_in_base
+} else if (mentee_starter_rows > mentor_starter_rows) {
+#### Multiple mentees ----
+  ## if more mentees than mentors, duplicate mentors who indicates willingness to take 2 mentees
+  mentee_in          <- mentee_in_base
+  
+  add_row_counter    <- mentee_starter_rows - mentor_starter_rows
+  random_mentors     <- round(runif(add_row_counter, 1, mentor_multiple_mentee_rows))
+  
+  ## shuffle multiple mentee dataframe randomly
+  multiple_mentee_mentors_shuffled <- multiple_mentee_mentors[
+    sample(1:nrow(multiple_mentee_mentors)),]
+  multiple_mentee_mentors_shuffled_full_mentor_data <- 
+    inner_join(mentor_in_base,
+               multiple_mentee_mentors_shuffled %>% 
+                 distinct(Mentor.Name))
+    
+  ## now make enough rows given number of mentees, without causing any mentor
+  ## to repeat unless necessary
+  mentor_in          <- mentor_in_base
+  needed_rows <- mentee_starter_rows - nrow(mentor_in)
+  while (needed_rows > 0) {
+    ## print(paste("Needed rows for mentor count to equal mentee count: ", needed_rows))
+    ## Below, the scores used for ranking get modified 
+    ##   look for str_sub(Mentor.Name, -1) == '2' ~ CS_Pred_compatibility - 0.5,
+    ## Legacy helper retained as a comment only; it was not used by the loop.
+    ## rows_available <- nrow(multiple_mentee_mentors_shuffled_full_mentor_data) - needed_rows
+    mentor_in <-
+      bind_rows(mentor_in,
+                multiple_mentee_mentors_shuffled_full_mentor_data %>% 
+                  slice(1:needed_rows))
+    needed_rows <- mentee_starter_rows - nrow(mentor_in)
+    
+  }
+} else {
+  mentee_in          <- mentee_in_base
+  mentor_in          <- mentor_in_base
+}
+
+mentor_in <- mentor_in %>% 
+  group_by(Mentor.Name, mentor_concatenated_responses) %>% 
+  mutate(num_mentees = n()) %>% 
+  ungroup() %>% 
+  mutate(mentor_id = row_number()) %>% 
+  distinct(Mentor.Name, mentor_concatenated_responses, mentor_id, num_mentees)
+
+mentee_in <- mentee_in %>% 
+  mutate(mentee_id = row_number())
+
+## Potenial future use if need NA fill
+# gfg_data<- data.frame(col1 = c(OCC1,rep(NA, max_ln - length(OCC1))),
+#                       col2 = c(OCC2,rep(NA, max_ln - length(OCC2))))
+
+## https://community.rstudio.com/t/similarity-between-sents-in-two-columns/141509
+max_ln <- max(
+  length(mentor_in$mentor_concatenated_responses),
+  length(mentee_in$mentee_concatenated_responses)
+)
+```
+
+
+```{r show_setup2, include = TRUE, echo = TRUE, cache = FALSE}
+## !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! ##
+##     to evaluate stopwords used by tidytext, same source is snowball
+## english_stopwords <- toupper(stopwords::stopwords(source = 'snowball')) 
+## !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! ##
+
+## 1 row per word - MANY rows
+mentor_concatenated_responses_unnest <- mentor_in %>% 
+  select(mentor_id, mentor_concatenated_responses) %>% 
+  unnest_tokens(word, mentor_concatenated_responses) %>% 
+  select(mentor_id, word)
+
+mentor_concatenated_responses_unnest_no_stopwords <- 
+  mentor_concatenated_responses_unnest %>% 
+    # get_stopwords() default is snowball
+    anti_join(get_stopwords(source = "snowball")) %>% 
+    dplyr::filter(nchar(word) >= 2) %>% 
+    dplyr::filter(!word %in% c('im','id', 'go', 'bg'))
+
+## Evaluate what terms to remove from mentor_concatenated_responses_unnest above
+# mentor_concatenated_responses_unnest_no_stopwords %>%
+#   dplyr::filter(nchar(word) < 3) %>%
+#   janitor::tabyl(word) %>%
+#   arrange(desc(n))
+
+mentor_concatenated_responses_no_stopwords_frm <- mentor_concatenated_responses_unnest_no_stopwords %>% 
+  group_by(mentor_id) %>% 
+  summarize(mentor_concatenated_responses_no_stopwords = toupper(paste(word, collapse = " "))) %>% 
+  ungroup() %>% 
+  select(mentor_id, mentor_concatenated_responses_no_stopwords)
+
+mentor_in <- mentor_in %>% 
+  left_join(., mentor_concatenated_responses_no_stopwords_frm,
+            multiple = "all")
+
+## 1 row per word - MANY rows
+mentee_concatenated_responses_unnest <- mentee_in %>% 
+  unnest_tokens(word, mentee_concatenated_responses) %>% 
+  select(mentee_id, word)
+
+mentee_concatenated_responses_unnest_no_stopwords <- 
+  mentee_concatenated_responses_unnest %>% 
+    anti_join(get_stopwords(source = "snowball")) %>% 
+    dplyr::filter(nchar(word) >= 2)
+
+mentee_concatenated_responses_no_stopwords_frm <- mentee_concatenated_responses_unnest_no_stopwords %>% 
+  group_by(mentee_id) %>% 
+  summarize(mentee_concatenated_responses_no_stopwords = toupper(paste(word, collapse = " "))) %>% 
+  ungroup() %>% 
+  select(mentee_id, mentee_concatenated_responses_no_stopwords)
+
+mentee_in <- mentee_in %>% 
+  ## Multiple mentees may exist because of duplicates for 
+  ## mentor:mentee imbalance in 
+  left_join(., mentee_concatenated_responses_no_stopwords_frm,
+            multiple = "all")
+
+all_data <- data.frame(
+  col1 = c(unique(mentor_in$mentor_concatenated_responses_no_stopwords),
+           rep(NA, max_ln - length(unique(mentor_in$mentor_concatenated_responses_no_stopwords)))),
+  col2 = c(unique(mentee_in$mentee_concatenated_responses_no_stopwords),
+           rep(NA, max_ln - length(unique(mentee_in$mentee_concatenated_responses_no_stopwords))))
+)
+
+all_combinations <-
+  expand.grid(unique(all_data$col1),
+              unique(all_data$col2), stringsAsFactors = FALSE)
+all_combinations <- all_combinations %>% 
+  dplyr::filter(!is.na(Var1) & !is.na(Var2))
+```
+
+```{r matching_score_derivation, include = TRUE, echo = TRUE, cache = FALSE}
+alignment_combinations_base0 <- all_combinations %>%
+  mutate(Cosine_Similarity =
+           COS_TEXT(text_vector1 =
+                      str_replace_all(
+                       str_replace_all(toupper(Var1), "[^A-Z ]", ""),
+                       "[:space:]+",
+                       " "),
+                    text_vector2 =
+                      str_replace_all(
+                       str_replace_all(toupper(Var2), "[^A-Z ]", ""),
+                       "[:space:]+",
+                       " ")
+           ),
+         MW_count =
+           numwords(
+                      str_replace_all(
+                       str_replace_all(toupper(Var1), "[^A-Z ]", ""),
+                       "[:space:]+",
+                       " "),
+                   
+                      str_replace_all(
+                       str_replace_all(toupper(Var2), "[^A-Z ]", ""),
+                       "[:space:]+",
+                       " ")
+           ),
+         Matching_Words = 
+           matchwords(
+                      str_replace_all(
+                       str_replace_all(toupper(Var1), "[^A-Z ]", ""),
+                       "[:space:]+",
+                       " "),
+                      str_replace_all(
+                       str_replace_all(toupper(Var2), "[^A-Z ]", ""),
+                       "[:space:]+",
+                       " ")
+           )
+  )
+
+last_year_results_with_id <-
+  ## acquire mentor_id
+  left_join(last_year_results,
+            mentor_in %>% distinct(Mentor.Name, mentor_id,
+                                   mentor_concatenated_responses_no_stopwords),
+            by = c('mentor_name' = 'Mentor.Name'),
+            ## duplication of mentors to balance mentor:mentee count 
+            ## can cause many:1 join
+            multiple = "all") %>% 
+  ## acquire mentee_id
+  left_join(.,
+            mentee_in %>% distinct(Mentee.Name, mentee_id,
+                                   mentee_concatenated_responses_no_stopwords),
+            by = c('mentee_name' = 'Mentee.Name'),
+            ## duplication of mentors to balance mentor:mentee count 
+            ## can cause many:1 join
+            multiple = "all") %>% 
+  distinct(mentor_name, mentee_name, .keep_all = TRUE) %>% 
+  mutate (
+   Matching_Words = 
+           matchwords(
+                      str_replace_all(
+                       str_replace_all(toupper(mentor_concatenated_responses_no_stopwords), "[^A-Z ]", ""),
+                       "[:space:]+",
+                       " "),
+                      str_replace_all(
+                       str_replace_all(toupper(mentee_concatenated_responses_no_stopwords), "[^A-Z ]", ""),
+                       "[:space:]+",
+                       " ")
+           )
+   ) 
+
+#### Base Variable Assignment ----
+## Implement loop-indicated multipliers ID'd in other scripts
+## Top words in original matches
+
+## Mentor has extra/introvert preference and mentee matches
+a <-  5
+# Mentor has no extra/intro preference
+b <-  -5
+# All other mentor extra/intro possibilities
+c <- -15
+## Mentee has extra/introvert preference and mentor matches
+d <-  25
+# Mentee extra/introvert preference matches how mentor identified
+e <-  5
+# Mentee has no extra/introvert preference
+f <-  0
+# All other mentee extra/intro possibilities
+g <- -10
+### grade_subscore
+
+## h + 25 if mentee prefers higher grade mentor, mentee grade is 1, mentor 1-4 grades above mentee
+#  h + 20 if mentee prefers higher grade mentor, mentee grade is 1-3, mentor 1-2 grades above mentee
+#  h + 15 if mentee prefers higher grade mentor, mentee grade is 4+, mentor 1-2 grades above mentee
+#  h + 5 if mentee prefers higher grade mentor and mentor 1 grade above mentee
+#  h + 0 if mentee prefers higher grade mentor
+h <-  100
+## If no h condition met, then :
+# i + 5 if mentee wanted a mentor of the same grade, mentee grade is 5+, mentor/mentee same grade
+# i if mentee wanted a mentor of the same grade, mentee grade is 3+, mentor/mentee same grade
+i <-  90
+## If no h or i condition met, then:
+# j + 0 if mentor grade is above mentee
+j <-  60
+## If no h, i, j condition met, then:
+# k + 0 if mentor/mentee same grade
+k <-  5
+## If no h, i, j, k condition met, then:
+# l + 0 if mentor grade LESS than mentee
+l <-  -100
+### BG_match
+# m + 0 if mentee prefers a mentor of the same BG and mentor/mentee same BG
+m <-  10
+# n + 0 if mentee prefers a mentor of a different BG and mentor/mentee different BG
+n <-  0
+# o + 0 if mentee has no preference about mentor BG
+o <-  0
+# All other BG preference comparisons
+p <- -10
+# multiplier for mentor_skills_match
+q <- 20
+# multiplier of # of words extracted from the columns in concat_cols that match between the mentor and mentee responses
+# !!! Ignored in this script because operates on some consideration of 2022 Matching Words - dropped.
+t <-  1
+# !!! u SET AT TOP !!!
+# Multiplier by overall_survey_match_num added to cosine_similiarity or word_matching
+# u <- SET AT TOP
+# !!! u SET AT TOP !!!
+
+## although used a = 16 in May, 2023 so just one match with lower grade mentor
+#   a2 b2 c2 d2 e2 f2  g2  h2  i2 j2 k2 l2 m2 n2 o2 p2 q2 r2 s2 t2   u2  cor_original_match_words_cos cor_original_match_words_matchct
+# 1 18  0 -5  2  2  0 -10 110 100 80 85  0  2  2  1 -5  3  3  2  1 0.25 0.5155368 0.6160533
+
+################### SPECIAL NOTE ############################
+## It is not helpful to use V in terms of the correlations ##
+## so not using here but am using for                      ##
+## mentee-specific adjustment - 4pivot_mentee data frames  ##
+## ##########################################################
+
+## Dropped use of original_match_count_of_top_Matching_Words
+alignment_combinations_base <- 
+  alignment_combinations_base0
+
+mentor_mentee_alignment0 <- 
+    left_join(mentor_in, alignment_combinations_base,
+              by = c('mentor_concatenated_responses_no_stopwords' = 'Var1'),
+              multiple = 'all') %>%
+    left_join(., mentee_in %>% distinct(mentee_id, Mentee.Name, 
+                                        Matched_mentor_last_year,
+                                        mentee_concatenated_responses_no_stopwords),
+              by = c('Var2' = 'mentee_concatenated_responses_no_stopwords'),
+              multiple = 'all') %>% 
+    ## Acquires mentor_skills_match
+    left_join(., surv_results_concat_skills_improve_mentor_Matching_Words) %>% 
+    mutate(mentor_skills_match = q *  mentor_skills_match) %>% 
+    rename(mentee_concatenated_responses_no_stopwords = Var2) %>% 
+    distinct(mentor_id, mentee_id, .keep_all = TRUE)
+
+surv_results_logical_remove <- setdiff(
+  c(colnames(surv_results_logical_mentor),
+    colnames(surv_results_logical_mentee)),
+  c("Mentee.Name","Mentor.Name"))
+
+mentor_mentee_alignment_allvars0 <- 
+  left_join(mentor_mentee_alignment0, surv_results_logical_mentor) %>% 
+  left_join(., surv_results_logical_mentee) %>% 
+  mutate(grade_mentor_num = 
+           as.numeric(
+             str_extract(grade_mentor, "\\d+")),
+         grade_mentee_num = 
+           as.numeric(
+             str_extract(grade_mentee, "\\d+"))) %>% 
+  left_join(., surv_results %>% 
+                  dplyr::filter(would_you_like_to_be_a_mentor_or_a_mentee == 'Mentor') %>% 
+                  rename(Mentor.Name = display_name) %>% 
+                  distinct(Mentor.Name, free_text_responses_number_of_characters, corp_id) %>% 
+                  rename(Mentor_free_text_responses_number_of_characters = 
+                            free_text_responses_number_of_characters,
+                         Mentor_corp_id = corp_id)
+            ) %>% 
+  left_join(., surv_results %>% 
+                  dplyr::filter(would_you_like_to_be_a_mentor_or_a_mentee == 'Mentee') %>% 
+                  rename(Mentee.Name = display_name) %>% 
+                  distinct(Mentee.Name, free_text_responses_number_of_characters, corp_id) %>% 
+                  rename(Mentee_free_text_responses_number_of_characters = 
+                            free_text_responses_number_of_characters,
+                         Mentee_corp_id = corp_id)
+            )
+
+#### Weights ----
+mentor_mentee_alignment_allvars <- mentor_mentee_alignment_allvars0 %>% 
+  mutate(personality_mentee_match = case_when(
+           personality_pair_mentor == extra_intro_mentee ~ a,
+           personality_pair_mentor == "No preference" ~ b,
+           TRUE ~ c),
+         personality_mentor_match = case_when(
+           personality_pair_mentee == extra_intro_mentor ~ d,
+           personality_pair_mentee == personality_pair_mentor ~ e,
+           personality_pair_mentee == "No preference" ~ f,
+           TRUE ~ g),
+         ####################################################
+         ##!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!##
+         ##  Relative mentor:mentee grade solution was     ##
+         ##  achieved after much experimentation, yiedling ##
+         ##  no concerning grade:grade mentor:mentee       ##
+         ##  matches after Gale-Shapley does its work to   ##
+         ##  pair, both for Cosine Similarity and Word     ##
+         ##  Matching                                      ##
+         ##!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!##
+         ####################################################
+         grade_mentor_minus_mentee = grade_mentor_num - grade_mentee_num,
+         grade_subscore = case_when(
+           mentor_above_role == "Above" & grade_mentee_num <= 1 & grade_mentor_minus_mentee <= 4 &  
+             grade_mentor_num > grade_mentee_num ~ h + 25,
+           mentor_above_role == "Above" & grade_mentee_num <= 3 & grade_mentor_minus_mentee <= 2 & 
+             grade_mentor_num > grade_mentee_num ~ h + 20,
+           mentor_above_role == "Above" & grade_mentee_num > 3 & grade_mentor_minus_mentee <= 2 & 
+             grade_mentor_num > grade_mentee_num ~ h + 15,
+           mentor_above_role == "Above" & grade_mentor_minus_mentee <= 1 &
+             grade_mentor_num > grade_mentee_num ~ h + 5,
+           mentor_above_role == "Above" & 
+             grade_mentor_num > grade_mentee_num ~ h,
+           mentor_above_role == "Same role/function" & grade_mentee_num >= 5 &
+             grade_mentor_num == grade_mentee_num ~ (i + 5),
+           mentor_above_role == "Same role/function" & grade_mentee_num >= 3 &
+             grade_mentor_num == grade_mentee_num ~ i,
+           ## Need same grade to be higher weight to avoid high >5% paired with mentor of lower grade
+           grade_mentor_num > grade_mentee_num ~ j,
+           grade_mentor_num == grade_mentee_num ~ k,
+           grade_mentor_num < grade_mentee_num ~ l),
+         BG_match = case_when(
+           prefer_mentee_same_BG == "Yes" & 
+             BG_mentee == BG_mentor ~ m,
+           prefer_mentee_same_BG == "No" & 
+             BG_mentee != BG_mentor ~ n,
+           prefer_mentee_same_BG == "No preference" ~ o,
+           TRUE ~ p),
+         ## Removed by program-owner decision, 2023-04-20.
+         # prefer_interaction_type_num = case_when(
+         #   (prefer_interaction_type_mentor == "No preference" |
+         #    prefer_interaction_type_mentee == "No preference") ~ q,
+         #   prefer_interaction_type_mentee == prefer_interaction_type_mentor ~ r,
+         #   TRUE ~ s),
+         mentor_concatenated_responses_chars = nchar(mentor_concatenated_responses_no_stopwords),
+         mentee_concatenated_responses_chars = nchar(mentee_concatenated_responses_no_stopwords),
+         ## Did not help
+         concatenated_responses_num_mentor_minus_mentee = 
+           100 - (abs(mentor_concatenated_responses_chars - mentee_concatenated_responses_chars))
+         ) %>% 
+  group_by(mentor_id, mentee_id) %>% 
+  mutate(overall_survey_match_num = sum(
+                                personality_mentee_match, 
+                                personality_mentor_match,
+                                grade_subscore,         
+                                BG_match,
+                                mentor_skills_match
+                                ## Removed by program-owner decision, 2023-04-20.
+                                ## prefer_interaction_type_num
+                                ))
+
+mentor_mentee_alignment <- mentor_mentee_alignment_allvars %>% 
+  # select(-personality_mentee_match, -personality_mentor_match,
+  #        -grade_subscore, -BG_match,
+  #        -prefer_interaction_type_num) %>% 
+  select(-all_of(surv_results_logical_remove))
+
+mentor_mentee_alignment <- mentor_mentee_alignment %>% 
+    mutate(
+      CS_Pred_compatibility = 
+             ((Cosine_Similarity * 100) + 
+                  (u * overall_survey_match_num)),
+      MW_Pred_compatibility = 
+             (MW_count + 
+                (u * overall_survey_match_num))
+    )
+# End of Weights section
+####
+
+mentor_mentee_rowct <- nrow(mentor_mentee_alignment)
+
+## Random alteration to ensure no duplicates of rank, such as if 
+## a mentor has more than 1 mentee and was therefore duplicated above.
+mentor_mentee_alignment$CS_Pred_compatibility <-
+  mentor_mentee_alignment$CS_Pred_compatibility +
+  runif(mentor_mentee_rowct, 0.000001, 0.000009)
+mentor_mentee_alignment$MW_Pred_compatibility <-
+  mentor_mentee_alignment$MW_Pred_compatibility +
+  runif(mentor_mentee_rowct, 0.000001, 0.000009)
+
+## Confirm no duplicates so each mentor / mentee pair has unique weight in Gale Shapley
+## mentor_mentee_alignment %>% group_by(CS_Pred_compatibility) %>% summarise(ct = n()) %>% arrange(desc(ct)) %>% slice(1:5)
+
+####
+#      i    j cor_original_match_words_cos cor_original_match_words_matchct cor_original_match_words_hybrid
+# 1 0.25 0.25                    0.4577827                        0.4394523                        0.480596
+# > print(stat_frm_optimal_mod_original_match_words %>% 
+# +           dplyr::filter(cor_original_match_words_matchct ==
+# +                             max(cor_original_match_words_matchct))
+# + )
+#      i   j cor_original_match_words_cos cor_original_match_words_matchct cor_original_match_words_hybrid
+# 1 0.75 1.5                    0.4343059                        0.5349214                       0.5177624
+# > print(stat_frm_optimal_mod_original_match_words %>% 
+# +           dplyr::filter(cor_original_match_words_hybrid ==
+# +                             max(cor_original_match_words_hybrid))
+# + )
+#      i    j cor_original_match_words_cos cor_original_match_words_matchct cor_original_match_words_hybrid
+# 1 0.25 0.75     
+```
+
+```{r show_setup3_gale_shapley_pairings, include = TRUE, echo = TRUE}
+## more columns in this one for mentor_mentee_alignment_rank_cos_sim_4pivot
+mentor_mentee_alignment_rank_cos_sim_4pivot_mentee <-
+  left_join(
+    mentor_mentee_alignment,
+    mentor_mentee_alignment_allvars %>% 
+              distinct(Mentor.Name, grade_mentor, 
+                       Mentee.Name, grade_mentee, num_mentees,
+                       mentor_above_role)) %>% 
+  # mutate(
+  #   CS_Pred_compatibility_mentee = 
+  #     CS_Pred_compatibility + (personality_mentor_match * mod_mentee)
+  #   ) %>% 
+  mutate(
+    CS_Pred_compatibility_mentee =
+      CS_Pred_compatibility
+    ) %>%
+  group_by(mentee_id) %>%
+    mutate(GS_mentee_rank_of_mentor = row_number(desc(CS_Pred_compatibility_mentee))) %>%
+  ungroup() %>%
+  select(mentor_id, mentee_id, 
+         grade_mentor, grade_mentee,
+         GS_mentee_rank_of_mentor, 
+         CS_Pred_compatibility_mentee)
+
+mentor_mentee_alignment_rank_cos_sim_4pivot_mentor <-
+  left_join(
+    mentor_mentee_alignment,
+    mentor_mentee_alignment_allvars %>% 
+              distinct(Mentor.Name, grade_mentor,
+                       Mentee.Name, grade_mentee, num_mentees)) %>% 
+  group_by(mentor_id) %>%
+  mutate(GS_mentor_rank_of_mentee = row_number(desc(CS_Pred_compatibility))) %>%
+  ungroup() %>%
+  select(mentor_id, mentee_id, 
+         GS_mentor_rank_of_mentee, CS_Pred_compatibility, 
+         num_mentees)
+
+mentor_mentee_alignment_rank_cos_sim_4pivot <- 
+  inner_join(mentor_mentee_alignment_rank_cos_sim_4pivot_mentee,
+             mentor_mentee_alignment_rank_cos_sim_4pivot_mentor)
+
+mentor_mentee_alignment_rank_cos_sim <- 
+  mentor_mentee_alignment_rank_cos_sim_4pivot %>% 
+  select(-CS_Pred_compatibility, -CS_Pred_compatibility_mentee,
+         -num_mentees)
+
+mentor_with_alignment_pivot_cos_sim <-
+  mentor_mentee_alignment_rank_cos_sim_4pivot %>%
+  pivot_wider(id_cols = mentor_id, names_from = mentee_id,
+              values_from = CS_Pred_compatibility)
+
+mentor_with_alignment_pivot_num_mentees_cos_sim <-
+  mentor_mentee_alignment_rank_cos_sim_4pivot %>%
+  distinct(mentor_id, num_mentees)
+
+num_mentees_slot_cos_sim <- 
+  mentor_with_alignment_pivot_num_mentees_cos_sim %>% 
+    mutate(num_mentees = as.double(num_mentees)) %>% 
+    pull(num_mentees)
+
+mentee_with_alignment_pivot_cos_sim <-
+  mentor_mentee_alignment_rank_cos_sim_4pivot %>%
+  pivot_wider(id_cols = mentee_id, names_from = mentor_id,
+              values_from = CS_Pred_compatibility_mentee)
+
+matching_cos_sim <- galeShapley.marriageMarket(
+  mentee_with_alignment_pivot_cos_sim %>% select(-mentee_id),
+  mentor_with_alignment_pivot_cos_sim %>% select(-mentor_id)
+  )
+
+match_cos_sim_frm <- data.frame(matching_cos_sim$engagements)
+
+colnames(match_cos_sim_frm) <- 'engagements'
+
+match_frm_more_cols_cos_sim <- match_cos_sim_frm %>%
+      mutate(mentee_id = row_number(),
+             mentor_id = engagements) %>%
+  select(-engagements) %>%
+  left_join(.,
+            mentor_in %>% select(mentor_id, Mentor.Name)) %>%
+  left_join(.,
+            mentee_in %>% select(mentee_id, Mentee.Name,  
+                                Matched_mentor_last_year)) %>% 
+  arrange(Mentee.Name) %>%
+  mutate(Algorithm_Same_Match = case_when(
+      Mentor.Name == Matched_mentor_last_year ~ TRUE,
+      TRUE ~ FALSE)) %>%
+  relocate(Mentee.Name, Mentor.Name, Matched_mentor_last_year, Algorithm_Same_Match)
+
+match_distribute_frm_cos_sim <- match_frm_more_cols_cos_sim %>%
+  select(Mentee.Name, Mentor.Name, Matched_mentor_last_year, Algorithm_Same_Match) %>%
+  rename(GaleShapley_Matched_Mentor_Name = Mentor.Name)
+
+match_full_stat_frm_cos_sim <-
+  left_join(match_frm_more_cols_cos_sim, mentor_mentee_alignment_rank_cos_sim) %>%
+  left_join(., mentor_mentee_alignment_allvars0 %>% 
+                distinct(Mentor.Name, Mentee.Name,
+                         Mentor_corp_id, Mentee_corp_id,
+                         grade_mentor, grade_mentee)) %>% 
+  dplyr::filter(!is.na(Mentor.Name) & !is.na(Mentee.Name)) %>% 
+  rename(GaleShapley_Matched_Mentor_Name = Mentor.Name) %>%
+  select(-mentor_id, -mentee_id) %>% 
+  relocate(all_of(
+    c("grade_mentor", 
+      "grade_mentee")),
+    .after = "GS_mentee_rank_of_mentor") %>% 
+  select(
+    Mentee.Name, GaleShapley_Matched_Mentor_Name,
+    grade_mentee, grade_mentor,
+    GS_mentee_rank_of_mentor, GS_mentor_rank_of_mentee,
+    Mentee_corp_id, Mentor_corp_id, 
+    Matched_mentor_last_year,
+    Algorithm_Same_Match)
+
+## Find where multiple mentees matched to a mentor
+match_full_stat_frm_multiple_mentee_cos_sim <- 
+  match_full_stat_frm_cos_sim %>% 
+  group_by(GaleShapley_Matched_Mentor_Name) %>% 
+  add_count() %>% 
+  ungroup() %>% 
+  dplyr::filter(n > 1) %>% 
+  select(-n) %>% 
+  arrange(GaleShapley_Matched_Mentor_Name)
+
+match_full_stat_frm_multiple_mentee_cos_sim <- 
+  match_full_stat_frm_multiple_mentee_cos_sim %>% 
+  group_by(GaleShapley_Matched_Mentor_Name, Mentor_corp_id) %>%
+  summarise(
+    Mentee.Name = case_when(
+      n() == 1 ~ first(Mentee.Name),
+      n() == 2 ~ paste(first(Mentee.Name), "and", last(Mentee.Name)),
+      # do not know if this works (> 2 not needed as of 2024)
+      n() > 2 ~ paste0(
+        paste(head(Mentee.Name, -1), collapse = ", "),
+        ", and ",
+        last(Mentee.Name)
+        )
+      ),
+    Mentee_corp_id = case_when(
+      n() == 1 ~ first(Mentee_corp_id),
+      n() == 2 ~ paste(first(Mentee_corp_id), "and", last(Mentee_corp_id)),
+      # do not know if this works (> 2 not needed as of 2024)
+      n() > 2 ~ paste0(
+        paste(head(Mentee_corp_id, -1), collapse = ", "),
+        ", and ",
+        last(Mentee_corp_id)
+        )
+      )
+  ) %>% 
+  ungroup() %>% 
+  select(GaleShapley_Matched_Mentor_Name, Mentee.Name,
+         Mentor_corp_id,  Mentee_corp_id)
+```
+
+```{r show_setup4, include = TRUE, echo = TRUE}
+rank_role_frm_cos_sim <- 
+  bind_rows(
+   match_full_stat_frm_cos_sim %>% 
+   mutate(Rank = GS_mentor_rank_of_mentee, Role = 'Mentor') %>% 
+   select(Rank, Role),
+   match_full_stat_frm_cos_sim %>% 
+   mutate(Rank = GS_mentee_rank_of_mentor, Role = 'Mentee') %>% 
+   select(Rank, Role))
+  
+```
+
+```{r show_setup3_word_matching, include = TRUE, echo = TRUE}
+
+mentor_mentee_with_word_matching_4pivot_mentee <-
+  left_join(
+    mentor_mentee_alignment,
+    mentor_mentee_alignment_allvars %>% 
+              distinct(Mentor.Name, grade_mentor,
+                       Mentee.Name, grade_mentee, num_mentees,
+                       mentor_above_role)) %>% 
+  # mutate(
+  #   MW_Pred_compatibility_mentee = 
+  #     MW_Pred_compatibility + (personality_mentor_match * mod_mentee)
+  #   ) %>% 
+  mutate(
+    MW_Pred_compatibility_mentee =
+      MW_Pred_compatibility
+    ) %>%
+  group_by(mentee_id) %>%
+    mutate(GS_mentee_rank_of_mentor = 
+             row_number(desc(MW_Pred_compatibility_mentee))) %>%
+  ungroup() %>%
+  select(mentor_id, mentee_id, 
+         grade_mentor, grade_mentee,
+         GS_mentee_rank_of_mentor, 
+         MW_Pred_compatibility_mentee)
+
+mentor_mentee_with_word_matching_4pivot_mentor <-
+  left_join(
+    mentor_mentee_alignment,
+    mentor_mentee_alignment_allvars %>% 
+              distinct(Mentor.Name, grade_mentor,
+                       Mentee.Name, grade_mentee, num_mentees)) %>% 
+  group_by(mentor_id) %>%
+  mutate(GS_mentor_rank_of_mentee = row_number(desc(MW_Pred_compatibility))) %>%
+  ungroup() %>%
+  select(mentor_id, mentee_id, 
+         GS_mentor_rank_of_mentee, MW_Pred_compatibility, 
+         num_mentees)
+
+mentor_mentee_with_word_matching_4pivot <- 
+  inner_join(mentor_mentee_with_word_matching_4pivot_mentee,
+             mentor_mentee_with_word_matching_4pivot_mentor)
+
+mentor_mentee_alignment_rank_word_matching <- 
+  mentor_mentee_with_word_matching_4pivot %>% 
+  select(-MW_Pred_compatibility, -MW_Pred_compatibility_mentee,
+         -num_mentees)
+
+# sort(sapply(mentor_mentee_alignment_rank, function(x) sum(is.na(x))))
+
+mentor_mentee_with_word_matching <- 
+  mentor_mentee_with_word_matching_4pivot %>% 
+  select(-MW_Pred_compatibility)
+
+mentor_with_word_matching_pivot <-
+  mentor_mentee_with_word_matching_4pivot %>%
+  pivot_wider(id_cols = mentor_id, names_from = mentee_id,
+              values_from = MW_Pred_compatibility)
+
+mentor_with_alignment_pivot_num_mentees_word_matching <-
+  mentor_mentee_with_word_matching_4pivot %>%
+  distinct(mentor_id, num_mentees)
+
+num_mentees_slot_word_matching <- 
+  mentor_with_alignment_pivot_num_mentees_word_matching %>% 
+    mutate(num_mentees = as.double(num_mentees)) %>% 
+    pull(num_mentees)
+
+mentee_with_word_matching_pivot <-
+  mentor_mentee_with_word_matching_4pivot %>%
+  pivot_wider(id_cols = mentee_id, names_from = mentor_id,
+              values_from = MW_Pred_compatibility_mentee)
+
+matching_word_matching <- galeShapley.marriageMarket(
+  mentee_with_word_matching_pivot %>% select(-mentee_id),
+  mentor_with_word_matching_pivot %>% select(-mentor_id)
+    )
+
+match_frm_word_matching <- data.frame(matching_word_matching$engagements)
+
+colnames(match_frm_word_matching) <- 'engagements'
+
+match_frm_more_cols_word_matching <- match_frm_word_matching %>%
+  mutate(mentee_id = row_number(),
+         mentor_id = engagements) %>%
+  select(-engagements) %>%
+  left_join(mentor_in %>% select(mentor_id, Mentor.Name)) %>%
+  left_join(mentee_in %>% select(mentee_id, Mentee.Name,  
+                                 Matched_mentor_last_year)) %>% 
+  arrange(Mentee.Name) %>%
+  mutate(Algorithm_Same_Match = case_when(
+    Mentor.Name == Matched_mentor_last_year ~ TRUE,
+    TRUE ~ FALSE)) %>%
+  relocate(Mentee.Name, Mentor.Name, Matched_mentor_last_year, Algorithm_Same_Match)
+
+match_distribute_frm_word_matching <- match_frm_more_cols_word_matching %>%
+  select(Mentee.Name, Mentor.Name, Matched_mentor_last_year, Algorithm_Same_Match) %>%
+  rename(GaleShapley_Matched_Mentor_Name = Mentor.Name)
+
+match_full_stat_frm_word_matching <-
+  left_join(match_frm_more_cols_word_matching, 
+            mentor_mentee_with_word_matching) %>%
+  left_join(., mentor_mentee_alignment_allvars0 %>% 
+                distinct(Mentor.Name, Mentee.Name,
+                         Mentor_corp_id, Mentee_corp_id,
+                         grade_mentor, grade_mentee)) %>% 
+  dplyr::filter(!is.na(Mentor.Name) & !is.na(Mentee.Name)) %>% 
+  rename(GaleShapley_Matched_Mentor_Name = Mentor.Name) %>%
+  select(-mentor_id, -mentee_id) %>% 
+  relocate(all_of(
+    c("grade_mentor", 
+      "grade_mentee")),
+    .after = "GS_mentee_rank_of_mentor") %>% 
+  select(
+    Mentee.Name, GaleShapley_Matched_Mentor_Name,
+    grade_mentee, grade_mentor,
+    GS_mentee_rank_of_mentor, GS_mentor_rank_of_mentee,
+    Mentee_corp_id, Mentor_corp_id, 
+    Matched_mentor_last_year,
+    Algorithm_Same_Match)
+
+## Find where multiple mentees matched to a mentor
+match_full_stat_frm_multiple_mentee_word_matching <- 
+  match_full_stat_frm_word_matching %>% 
+  group_by(GaleShapley_Matched_Mentor_Name) %>% 
+  add_count() %>% 
+  ungroup() %>% 
+  dplyr::filter(n > 1) %>% 
+  select(-n) %>% 
+  arrange(GaleShapley_Matched_Mentor_Name)
+
+match_full_stat_frm_multiple_mentee_word_matching <- 
+  match_full_stat_frm_multiple_mentee_word_matching %>% 
+  group_by(GaleShapley_Matched_Mentor_Name, Mentor_corp_id) %>%
+  summarise(
+    Mentee.Name = case_when(
+      n() == 1 ~ first(Mentee.Name),
+      n() == 2 ~ paste(first(Mentee.Name), "and", last(Mentee.Name)),
+      # do not know if this works (> 2 not needed as of 2024)
+      n() > 2 ~ paste0(
+        paste(head(Mentee.Name, -1), collapse = ", "),
+        ", and ",
+        last(Mentee.Name)
+        )
+      ),
+    Mentee_corp_id = case_when(
+      n() == 1 ~ first(Mentee_corp_id),
+      n() == 2 ~ paste(first(Mentee_corp_id), "and", last(Mentee_corp_id)),
+      # do not know if this works (> 2 not needed as of 2024)
+      n() > 2 ~ paste0(
+        paste(head(Mentee_corp_id, -1), collapse = ", "),
+        ", and ",
+        last(Mentee_corp_id)
+        )
+      )
+  ) %>% 
+  ungroup() %>% 
+  select(GaleShapley_Matched_Mentor_Name, Mentee.Name,
+         Mentor_corp_id,  Mentee_corp_id)
+
+```
+
+```{r show_setup4_word_matching, include = TRUE, echo = TRUE}
+
+rank_role_frm_word_matching <- 
+  bind_rows(
+    match_full_stat_frm_word_matching %>% 
+      mutate(Rank = GS_mentor_rank_of_mentee, Role = 'Mentor') %>% 
+      select(Rank, Role),
+    match_full_stat_frm_word_matching %>% 
+      mutate(Rank = GS_mentee_rank_of_mentor, Role = 'Mentee') %>% 
+      select(Rank, Role))
+
+mentor_matches_mentee_pref_prompt_frm_word_matching <-
+  left_join(match_full_stat_frm_word_matching,
+            mentee_in %>% distinct(Mentee.Name, mentee_concatenated_responses_no_stopwords),
+            multiple = 'all') %>%
+  left_join(., mentor_in %>% 
+              mutate(GaleShapley_Matched_Mentor_Name = Mentor.Name) %>% 
+              distinct(GaleShapley_Matched_Mentor_Name, 
+                       mentor_concatenated_responses_no_stopwords)) %>% 
+  mutate(Matching_Words = matchwords(mentee_concatenated_responses_no_stopwords, 
+                                     mentee_concatenated_responses_no_stopwords)) %>% 
+  # need to figure out why this is needed
+  distinct(GaleShapley_Matched_Mentor_Name, Mentee.Name, .keep_all = TRUE) %>% 
+  select(GaleShapley_Matched_Mentor_Name, Mentee.Name,
+         mentee_concatenated_responses_no_stopwords, mentor_concatenated_responses_no_stopwords, 
+         Matching_Words, GS_mentee_rank_of_mentor) %>%
+  arrange(GS_mentee_rank_of_mentor)
+
+```
+
+```{r grade_grade_count_setup, include = TRUE, echo = TRUE}
+match_full_grades_cos_sim <- 
+  match_full_stat_frm_cos_sim %>% 
+   select(grade_mentor, grade_mentee)
+
+match_full_grades_word_matching <- 
+  match_full_stat_frm_word_matching %>% 
+   select(grade_mentor, grade_mentee)            
+
+match_full_grades_word_matching_table <-
+  match_full_grades_word_matching %>%
+      ungroup() %>% 
+      mutate(grade_mentor = factor(grade_mentor, 
+                                         levels = c(paste0("Grade ", 1:9),            
+                                                    paste0("Grade ", 10)),
+                                         labels = c(paste0("Grade ", 1:9),   
+                                                    paste0("Grade ", 10)))) %>% 
+      janitor::tabyl(grade_mentor, grade_mentee) %>%
+      janitor::adorn_totals("row") %>%
+      janitor::adorn_totals("col") %>%
+      janitor::adorn_percentages("all") %>% 
+      janitor::adorn_pct_formatting(digits = 1) %>%
+      janitor::adorn_ns() %>% 
+      janitor::adorn_title()
+
+match_full_grades_cos_sim_table <-
+  match_full_grades_cos_sim %>%
+      ungroup() %>% 
+      mutate(grade_mentor = factor(grade_mentor, 
+                                         levels = c(paste0("Grade ", 1:9),            
+                                                    paste0("Grade ", 10)),
+                                         labels = c(paste0("Grade ", 1:9),   
+                                                    paste0("Grade ", 10)))) %>% 
+      janitor::tabyl(grade_mentor, grade_mentee) %>%
+      janitor::adorn_totals("row") %>%
+      janitor::adorn_totals("col") %>%
+      janitor::adorn_percentages("all") %>% 
+      janitor::adorn_pct_formatting(digits = 1) %>%
+      janitor::adorn_ns() %>% 
+      janitor::adorn_title()
+
+match_full_grades_count_cos_sim <- 
+  match_full_grades_cos_sim %>% 
+  count(grade_mentor, grade_mentee) %>% 
+  mutate(pct = n/sum(n)*100)
+
+match_full_grades_count_word_matching <- 
+  match_full_grades_word_matching %>% 
+  count(grade_mentor, grade_mentee) %>% 
+  mutate(pct = n/sum(n)*100)
+```
+
+# Grade : Grade Distribution
+This section appears near the top to aid assessment. The Cosine Similarity and Matching Words techniques used are described further below.
+
+## Mentees' Preferences of Relative Mentor Grade
+```{r grade_grade_pref_mentee, include = TRUE, echo = TRUE}
+mentee_grade_pref <- 
+  mentor_mentee_alignment_allvars0 %>% 
+  distinct(Mentee.Name, grade_mentee, mentor_above_role)
+
+mentee_grade_pref_tbl <- mentee_grade_pref %>% 
+  janitor::tabyl(grade_mentee, mentor_above_role) %>% 
+  janitor::adorn_totals("row") %>%
+  janitor::adorn_totals("col") %>%
+  janitor::adorn_percentages("all") %>% 
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns() %>% 
+  janitor::adorn_title()
+
+kable(mentee_grade_pref_tbl,
+      caption = paste0("Year ", year, ": Preference of Mentees: Higher Grade Mentor?")) %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped",
+                                        "bordered"),
+                  full_width = FALSE) %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(1, bold = TRUE) 
+```
+
+## Grade : Grade Bar Charts
+
+```{r grade_grade_count_bar, include = TRUE, echo = TRUE, eval = params$heavy}
+
+ggplot(match_full_grades_count_cos_sim %>% 
+         mutate(
+           grade_mentor_num = 
+           as.numeric(
+             str_extract(grade_mentor, "\\d+")),
+         grade_mentee_num = 
+           as.numeric(
+             str_extract(grade_mentee, "\\d+"))) %>% 
+         mutate(
+           grade_mentor = fct_reorder(grade_mentor, grade_mentor_num),
+           grade_mentee = fct_reorder(grade_mentee, grade_mentee_num)),
+  aes(y=grade_mentor, label=paste0(round(pct, digits=1)), x=pct)) + 
+  geom_col(aes(x=pct, fill=as.factor(grade_mentee))) +
+  scale_fill_viridis_d(direction = -1) +
+  labs(y="Mentor Grade", x="", title=str_wrap("Grade:Grade Cosine Similarity Pairing", width =60),
+       subtitle = year) +
+  guides(fill=guide_legend(title="Mentee Grade"))+ 
+  scale_y_discrete(labels = c(sort(unique(match_full_grades_count_word_matching$grade_mentor)))) + 
+  geom_text(aes(group=as.factor(grade_mentee)), 
+            size = 4, position = position_stack(vjust = 0.5, reverse=FALSE),   
+            colour="white")
+
+ggplot(match_full_grades_count_word_matching %>% 
+         mutate(
+           grade_mentor_num = 
+           as.numeric(
+             str_extract(grade_mentor, "\\d+")),
+         grade_mentee_num = 
+           as.numeric(
+             str_extract(grade_mentee, "\\d+"))) %>% 
+         mutate(
+           grade_mentor = fct_reorder(grade_mentor, grade_mentor_num),
+           grade_mentee = fct_reorder(grade_mentee, grade_mentee_num)),
+  aes(y=grade_mentor, label=paste0(round(pct, digits=1)), x=pct)) + 
+  geom_col(aes(x=pct, fill=as.factor(grade_mentee))) +
+  scale_fill_viridis_d(direction = -1) +
+  labs(y="Mentor Grade", x="", title=str_wrap("Grade:Grade Matching Words Pairing", width =60),
+       subtitle = year) +
+  guides(fill=guide_legend(title="Mentee Grade"))+ 
+  scale_y_discrete(labels = c(sort(unique(match_full_grades_count_word_matching$grade_mentor)))) + 
+  geom_text(aes(group=as.factor(grade_mentee)), 
+            size = 4, position = position_stack(vjust = 0.5, reverse=FALSE),   
+            colour="white")
+```
+
+## Grade : Grade Tables
+
+```{r grade_grade_count_tbl, include = TRUE, echo = TRUE}
+kable(match_full_grades_cos_sim_table,
+      caption = paste0("Year ", year, ": Cosine Similarity")) %>% 
+    kable_styling(bootstrap_options = c("condensed", "striped",
+                                        "bordered"),
+                  full_width = FALSE) %>%
+    column_spec(1, bold = TRUE) %>%  
+    row_spec(1, bold = TRUE) 
+
+kable(match_full_grades_word_matching_table,
+      caption = paste0("Year ", year, ": Matching Words")) %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped",
+                                        "bordered"),
+                  full_width = FALSE) %>%
+    column_spec(1, bold = TRUE) %>%  
+    row_spec(1, bold = TRUE) 
+
+match_full_stat_frm_word_matching_grade_comp <- 
+  left_join(match_full_stat_frm_word_matching,
+            mentor_mentee_alignment_allvars %>% 
+              distinct(Mentee.Name, Mentor.Name, mentor_above_role,
+                       grade_mentee_num, 
+                       grade_mentor_num),
+            by = c('GaleShapley_Matched_Mentor_Name' = 'Mentor.Name',
+                   'Mentee.Name')) %>% 
+  mutate(
+    mentor_to_mentee_grade_comparison = case_when(
+      grade_mentor_num > grade_mentee_num ~ "Higher Grade Mentor",
+      grade_mentor_num < grade_mentee_num ~ "Lower Grade Mentor",
+      grade_mentor_num == grade_mentee_num ~ "Same Grade Mentor"),
+    mentor_minus_mentee_grade_diff = 
+      grade_mentor_num - grade_mentee_num) 
+
+match_full_stat_frm_word_matching_grade_tbl <-
+  match_full_stat_frm_word_matching_grade_comp %>%
+      janitor::tabyl(mentor_to_mentee_grade_comparison) %>% 
+      janitor::adorn_pct_formatting(digits = 2) 
+
+match_full_stat_frm_cos_sim_grade_comp <- 
+  left_join(match_full_stat_frm_cos_sim,
+            mentor_mentee_alignment_allvars %>% 
+              distinct(Mentee.Name, Mentor.Name, mentor_above_role,
+                       grade_mentee_num, grade_mentor_num),
+            by = c('GaleShapley_Matched_Mentor_Name' = 'Mentor.Name',
+                   'Mentee.Name')) %>% 
+  mutate(
+    mentor_to_mentee_grade_comparison = case_when(
+      grade_mentor_num > grade_mentee_num ~ "Higher Grade Mentor",
+      grade_mentor_num < grade_mentee_num ~ "Lower Grade Mentor",
+      grade_mentor_num == grade_mentee_num ~ "Same Grade Mentor"),
+    mentor_minus_mentee_grade_diff = 
+      grade_mentor_num - grade_mentee_num) 
+
+match_full_stat_frm_cos_sim_grade_tbl <-
+  match_full_stat_frm_cos_sim_grade_comp %>%
+      janitor::tabyl(mentor_to_mentee_grade_comparison) %>% 
+      janitor::adorn_pct_formatting(digits = 2) 
+
+kable(match_full_stat_frm_cos_sim_grade_tbl,
+      caption = "Cosine Similarity") %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped",
+                                        "bordered"),
+                  full_width = FALSE) %>%
+  column_spec(1, bold = TRUE) 
+
+kable(match_full_stat_frm_word_matching_grade_tbl,
+      caption = "Matching Words") %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped",
+                                        "bordered"),
+                  full_width = FALSE) %>%
+  column_spec(1, bold = TRUE) 
+
+```
+
+## Lower Grade Matched - Table
+
+Summarizing where the mentor's grade is *lower* than the grade of the matched mentee.
+
+```{r lower_grade_tbl, include = TRUE, echo = TRUE, eval = FALSE, eval = params$heavy}
+match_full_stat_frm_word_matching_Lower_grade_mentor <- 
+  match_full_stat_frm_word_matching_grade_comp %>% 
+  dplyr::filter(grade_mentor_num < grade_mentee_num) %>% 
+  select(Mentee.Name, GaleShapley_Matched_Mentor_Name, 
+         grade_mentee, grade_mentor,
+         mentor_to_mentee_grade_comparison,
+         mentor_above_role) %>% 
+  rename(Prefer_Mentor_Higher_Grade = mentor_above_role)
+  
+match_full_stat_frm_cos_sim_Lower_grade_mentor <-
+  match_full_stat_frm_cos_sim_grade_comp %>% 
+  dplyr::filter(grade_mentor_num < grade_mentee_num) %>% 
+  select(Mentee.Name, GaleShapley_Matched_Mentor_Name, 
+         grade_mentee, grade_mentor,
+         mentor_to_mentee_grade_comparison,
+         mentor_above_role) %>% 
+  rename(Prefer_Mentor_Higher_Grade = mentor_above_role)
+
+match_full_stat_frm_word_matching_Lower_grade_mentor_table <-
+  match_full_stat_frm_word_matching_Lower_grade_mentor %>% 
+    mutate(
+      grade_mentor_num = 
+            as.numeric(
+             str_extract(grade_mentor, "\\d+")),
+      grade_mentee_num = 
+            as.numeric(
+             str_extract(grade_mentee, "\\d+")),
+      mentor_to_mentee_grade_comparison = case_when(
+        grade_mentor_num > grade_mentee_num ~ "Higher Grade Mentor",
+        grade_mentor_num < grade_mentee_num ~ "Lower Grade Mentor",
+        grade_mentor_num == grade_mentee_num ~ "Same Grade Mentor")
+    ) 
+
+match_full_stat_frm_cos_sim_Lower_grade_mentor_table <-
+  match_full_stat_frm_cos_sim_Lower_grade_mentor %>% 
+    mutate(
+      grade_mentor_num = 
+            as.numeric(
+             str_extract(grade_mentor, "\\d+")),
+      grade_mentee_num = 
+            as.numeric(
+             str_extract(grade_mentee, "\\d+")),
+      mentor_to_mentee_grade_comparison = case_when(
+        grade_mentor_num > grade_mentee_num ~ "Higher Grade Mentor",
+        grade_mentor_num < grade_mentee_num ~ "Lower Grade Mentor",
+        grade_mentor_num == grade_mentee_num ~ "Same Grade Mentor")
+    ) 
+
+if (nrow(match_full_stat_frm_cos_sim_Lower_grade_mentor_table) == 0) {
+  cat("No lower grade mentors appeared in Cosine Similarity pairings")
+} else {
+  kable(match_full_stat_frm_cos_sim_Lower_grade_mentor_table,
+      caption = "Lower Grade Mentor : Cosine Similarity") %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped",
+                                        "bordered"),
+                  full_width = FALSE) %>%
+  column_spec(1, bold = TRUE) 
+}
+
+if (nrow(match_full_stat_frm_word_matching_Lower_grade_mentor_table) == 0) {
+  cat("No lower grade mentors appeared in Matching Words pairings")
+} else {
+    kable(match_full_stat_frm_word_matching_Lower_grade_mentor_table,
+          caption = "Lower Grade Mentor : Matching Words") %>% 
+      kable_styling(bootstrap_options = c("condensed", "striped",
+                                          "bordered"),
+                    full_width = FALSE) %>%
+      column_spec(1, bold = TRUE)
+}
+
+```
+
+## Same Grade Matched - Table
+
+```{r same_grade, include = TRUE, echo = TRUE, eval = FALSE, eval = params$heavy}
+match_full_stat_frm_word_matching_Same_grade_mentor <- 
+  left_join(match_full_stat_frm_word_matching_grade_comp,
+            mentor_mentee_alignment_allvars0 %>% 
+              distinct(Mentor.Name, Mentee.Name, mentor_above_role) %>% 
+              rename(GaleShapley_Matched_Mentor_Name = Mentor.Name)) %>% 
+  dplyr::filter(grade_mentor_num == grade_mentee_num) %>% 
+  select(Mentee.Name, GaleShapley_Matched_Mentor_Name, 
+         grade_mentee, grade_mentor,
+         mentor_above_role,
+         mentor_to_mentee_grade_comparison) %>% 
+  rename(prefer_mentor_above_role = mentor_above_role)
+
+match_full_stat_frm_cos_sim_Same_grade_mentor <-
+  left_join(match_full_stat_frm_cos_sim_grade_comp,
+            mentor_mentee_alignment_allvars0 %>% 
+              distinct(Mentor.Name, Mentee.Name, mentor_above_role) %>% 
+              rename(GaleShapley_Matched_Mentor_Name = Mentor.Name)) %>% 
+  dplyr::filter(grade_mentor_num == grade_mentee_num) %>% 
+  select(Mentee.Name, GaleShapley_Matched_Mentor_Name, 
+         grade_mentee, grade_mentor,
+         mentor_above_role,
+         mentor_to_mentee_grade_comparison) %>% 
+  rename(prefer_mentor_above_role = mentor_above_role)
+
+match_full_stat_frm_word_matching_Same_grade_mentor_table <-
+  match_full_stat_frm_word_matching_Same_grade_mentor %>% 
+    janitor::tabyl(prefer_mentor_above_role, grade_mentor) %>%
+    janitor::adorn_totals("row") %>%
+    janitor::adorn_totals("col") %>%
+    janitor::adorn_percentages("all") %>% 
+    janitor::adorn_pct_formatting(digits = 1) %>%
+    janitor::adorn_ns() %>% 
+    janitor::adorn_title()
+
+match_full_stat_frm_cos_sim_Same_grade_mentor_table <-
+  match_full_stat_frm_cos_sim_Same_grade_mentor %>% 
+    janitor::tabyl(prefer_mentor_above_role, grade_mentor) %>%
+    janitor::adorn_totals("row") %>%
+    janitor::adorn_totals("col") %>%
+    janitor::adorn_percentages("all") %>% 
+    janitor::adorn_pct_formatting(digits = 1) %>%
+    janitor::adorn_ns() %>% 
+    janitor::adorn_title()
+
+kable(match_full_stat_frm_cos_sim_Same_grade_mentor_table,
+      caption = "Same Grade Mentor : Cosine Similarity") %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped",
+                                        "bordered"),
+                  full_width = FALSE) %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(1, bold = TRUE) 
+
+kable(match_full_stat_frm_word_matching_Same_grade_mentor_table,
+      caption = "Same Grade Mentor : Matching Words") %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped",
+                                        "bordered"),
+                  full_width = FALSE) %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(1, bold = TRUE) 
+```
+
+# Quality of Matches
+
+## Statistics Table: Quality of Matches
+
+```{r quality_match, include = TRUE, echo = TRUE}
+summary_match_qual_cos_sim <-
+  round(
+    t(
+      do.call(cbind,
+        lapply(match_full_stat_frm_cos_sim %>% 
+                 select(GS_mentor_rank_of_mentee,
+                        GS_mentee_rank_of_mentor),
+               function(x) quantile(x, probs = c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1), na.rm = TRUE)))  # Calculate deciles and including Min (0%) and Max (100%)
+    ),
+  2)
+
+colnames(summary_match_qual_cos_sim) <- c("Min", "10%", "20%", "30%", "40%", "Median", "60%", "70%", "80%", "90%", "Max") 
+
+#### Table summarizing match quality : Word Matching
+summary_match_qual_word_matching <-
+  round(
+    t(
+      do.call(cbind,
+        lapply(match_full_stat_frm_word_matching %>% 
+                 select(GS_mentor_rank_of_mentee,
+                        GS_mentee_rank_of_mentor),
+               function(x) quantile(x, probs = c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1), na.rm = TRUE)))
+    ),
+  2)
+
+colnames(summary_match_qual_word_matching) <- c("Min", "10%", "20%", "30%", "40%", "Median", "60%", "70%", "80%", "90%", "Max") 
+# delete to 1593
+percentile_breaks <- seq(0, 100, by = 5)
+
+# 1) Pull ranks (lower is better)
+mentee_ranks_cos_sim <- match_full_stat_frm_cos_sim %>%
+  pull(GS_mentee_rank_of_mentor)
+mentee_ranks_word_matching <- match_full_stat_frm_word_matching %>%
+  pull(GS_mentee_rank_of_mentor)
+
+#' Bin ranks with a special rank==1 bin and then percentile steps on 2..max_rank
+#' @param ranks Numeric vector of ranks (lower is better). Can contain NA.
+#' @param pct_steps Numeric vector of percentile steps (default seq(0.05, 1, 0.05)).
+#' @return List with bins (factor), bin_counts (integer vector), cum_percent (numeric),
+#'         and wide_table (1-row data.frame of cumulative percentages).
+bin_ranks_with_percentiles <- function(ranks, pct_steps = seq(0.05, 1.00, by = 0.05)) {
+  ranks <- as.numeric(ranks)
+  max_rank <- suppressWarnings(max(ranks, na.rm = TRUE))
+  if (is.infinite(max_rank)) max_rank <- NA_real_
+  
+  # Validate
+  if (is.na(max_rank)) {
+    stop("No valid ranks found (all NA).")
+  }
+  
+  # Construct breaks and labels
+  if (max_rank <= 1) {
+    breaks <- c(0.5, 1.5)
+    bin_labels <- "0ile"
+  } else {
+    boundary_ranks_after1 <- 1 + ceiling(pct_steps * (max_rank - 1))
+    breaks <- c(0.5, 1.5, boundary_ranks_after1 + 0.5)
+    bin_labels <- c("0ile", paste0(sprintf("%0.f", pct_steps * 100), "ile"))
+  }
+  
+  # Bin
+  bins <- cut(ranks, breaks = breaks, labels = bin_labels,
+              include.lowest = TRUE, right = TRUE)
+  
+  # Counts: preserve zero-levels
+  bin_counts <- as.integer(table(factor(bins, levels = bin_labels)))
+  
+  # Cumulative % over non-NA ranks
+  valid_n <- sum(!is.na(ranks))
+  cum_percent <- if (valid_n > 0) 100 * cumsum(bin_counts) / valid_n else rep(NA_real_, length(bin_counts))
+  
+  # Wide table
+  wide_table <- as.data.frame(t(round(cum_percent, 1)))
+  colnames(wide_table) <- bin_labels
+  
+  list(
+    bins = bins,
+    bin_counts = bin_counts,
+    cum_percent = cum_percent,
+    wide_table = wide_table
+  )
+}
+
+wide_table_percentile_cos_sim <- bin_ranks_with_percentiles(mentee_ranks_cos_sim)[[4]]
+wide_table_percentile_word_matching <- bin_ranks_with_percentiles(mentee_ranks_word_matching)[[4]]
+```
+
+```{r quality_match_table, include = TRUE, echo = TRUE, eval = params$heavy}
+
+kable(summary_match_qual_cos_sim,
+      caption = paste0("Year ", year, ": Cosine Similarity pairings: ")) %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped", "bordered"),
+                full_width = F)
+
+# Extract the value under "20ile" and round it
+percent_20ile <- round(wide_table_percentile_cos_sim[["20ile"]], 0)
+
+caption_text <- paste0(year, ": Cosine Similarity pairing - predicted compatibility of mentor percentiles for mentees. ", "For example, ", percent_20ile, "% of the mentees matched with a mentor among the top 20% most compatible. 0ile represents the single mentor predicted to be most compatible." )
+
+# Display the table with the caption
+kable(wide_table_percentile_cos_sim,
+      caption = caption_text) %>%
+  kable_styling(bootstrap_options = c("condensed", "striped", "bordered"), 
+                full_width = FALSE)
+
+kable(summary_match_qual_word_matching,
+      caption = paste0("Year ", year, ": Matching Words pairings: ")) %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped", "bordered"), 
+                 full_width = F)
+
+# Extract the value under "20ile" and round it
+percent_20ile <- round(wide_table_percentile_word_matching[["20ile"]], 0)
+
+caption_text <- paste0(year, ": Matching Words pairing - predicted compatibility of mentor percentiles for mentees. ", "For example, ", percent_20ile, "% of the mentees matched with a mentor among the top 20% most compatible. 0ile represents the single mentor predicted to be most compatible.")
+
+# Display the table with the caption
+kable(wide_table_percentile_word_matching,
+      caption = caption_text) %>%
+  kable_styling(bootstrap_options = c("condensed", "striped", "bordered"), 
+                full_width = FALSE)
+
+```
+
+```{r per_grade_fairness}
+
+# ---- Fairness: mentor percentile by grade ----
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(flextable)
+library(purrr)
+
+# Choose the grade dimension to test fairness across
+grade_col <- "grade_mentee"   # change to "grade_mentor" if desired
+
+# Build mentor percentile (0–100) from ranks for Word Matching frame
+fair_df_word_matching <- match_full_stat_frm_word_matching %>%
+  mutate(
+    # rank is 1=best; convert to percentile of *predicted compatibility from mentee’s perspective*
+    mentee_rank = GS_mentee_rank_of_mentor,
+    # max possible rank equals candidate count visible to the mentee
+    max_rank    = max(mentee_rank, na.rm = TRUE),
+    mentor_percentile = 100 * ((mentee_rank - 1) / (max_rank - 1)) # best rank = 0
+    # Note: If ties exist or exact 0/100 are problematic, you can use (rank-0.5)/max_rank then *100
+  ) %>%
+  filter(!is.na(mentor_percentile), !is.na(grade_mentee)) %>%
+  mutate(
+    grade_stratum = factor(grade_mentee, levels = sort(unique(grade_mentee))),
+    method = factor("Matching Words", levels = c("Cosine Similarity", "Matching Words")),
+    u = u
+  )
+
+# Build mentor percentile (0–100) from ranks for Cosine Similarity frame
+fair_df_cos_sim <- match_full_stat_frm_cos_sim %>%
+  mutate(
+    # rank is 1=best; convert to percentile of *predicted compatibility from mentee’s perspective*
+    mentee_rank = GS_mentee_rank_of_mentor,
+    # max possible rank equals candidate count visible to the mentee
+    max_rank    = max(mentee_rank, na.rm = TRUE),
+    mentor_percentile = 100 * ((mentee_rank - 1) / (max_rank - 1)) # best rank = 0
+    # Note: If ties exist or exact 0/100 are problematic, you can use (rank-0.5)/max_rank then *100
+  ) %>%
+  filter(!is.na(mentor_percentile), !is.na(grade_mentee)) %>%
+  mutate(
+    grade_stratum = factor(grade_mentee, levels = sort(unique(grade_mentee))),
+    method = factor("Cosine Similarity", levels = c("Cosine Similarity", "Matching Words")),
+    u = u
+  )
+```
+
+## `r year`: Density Plot (Rank of Matches): Cosine Similarity
+
+A rank of 1 would mean that the individual was paired with the mentor or mentee of highest predicted compatibility.
+
+```{r density plot, eval = params$heavy}
+## https://jtr13.github.io/cc20/brief-introduction-and-tutorial-of-ggpubr-package.html
+ggdensity(rank_role_frm_cos_sim, x = "Rank",
+   rug = TRUE,
+   color = "Role", fill = "Role") +
+   labs(subtitle = year) 
+
+```
+
+## `r year`: Density Plot (Rank of Matches): Matching Words
+
+A rank of 1 would mean that the individual was paired with the mentor or mentee of highest predicted compatibility.
+
+```{r density plot_word_matching, eval = params$heavy}
+## https://jtr13.github.io/cc20/brief-introduction-and-tutorial-of-ggpubr-package.html
+ggdensity(rank_role_frm_word_matching, x = "Rank",
+          rug = TRUE,
+          color = "Role", fill = "Role") +
+   labs(subtitle = year) 
+```
+
+# Unmatched mentors or mentees
+
+These individuals were not matched with a person of the opposite category (mentor / mentee) because of insufficient numbers.
+
+```{r unmatched, include = TRUE, echo = TRUE, eval = params$heavy}
+missing_for_mentee_cos_sim <- 
+  anti_join(
+    mentor_mentee_alignment_allvars0 %>% 
+      distinct(Mentee.Name, grade_mentee_num, Mentee_free_text_responses_number_of_characters),
+    match_distribute_frm_cos_sim %>% 
+      filter(!is.na(GaleShapley_Matched_Mentor_Name)) %>% 
+      distinct(Mentee.Name)) %>% 
+  rename(Name = Mentee.Name,
+         free_text_responses_number_of_characters = Mentee_free_text_responses_number_of_characters) %>% 
+  mutate (Name = "Dummy") %>% 
+  mutate(Desired_Role = "Mentee",
+                Grade = grade_mentee_num) %>% 
+  select(Name, Desired_Role, Grade, free_text_responses_number_of_characters)
+
+missing_for_mentor_cos_sim <- 
+  anti_join(
+    mentor_mentee_alignment_allvars0 %>% 
+      distinct(Mentor.Name, grade_mentor_num, Mentor_free_text_responses_number_of_characters),
+    match_distribute_frm_cos_sim %>% 
+        filter(!is.na(Mentee.Name)) %>% 
+        distinct(GaleShapley_Matched_Mentor_Name),
+    by = c('Mentor.Name' = 'GaleShapley_Matched_Mentor_Name')) %>% 
+  rename(Name = Mentor.Name,
+         free_text_responses_number_of_characters = Mentor_free_text_responses_number_of_characters) %>% 
+  mutate(Desired_Role = "Mentor",
+                Grade = grade_mentor_num) %>% 
+  mutate (Name = "Dummy") %>% 
+  select(Name, Desired_Role, Grade, free_text_responses_number_of_characters)
+
+missing_for_mentee_word_matching <- 
+  anti_join(
+    mentor_mentee_alignment_allvars0 %>% 
+      distinct(Mentee.Name, grade_mentee_num, Mentee_free_text_responses_number_of_characters),
+    match_distribute_frm_word_matching %>% 
+      filter(!is.na(GaleShapley_Matched_Mentor_Name)) %>% 
+      distinct(Mentee.Name)) %>% 
+  rename(Name = Mentee.Name,
+         free_text_responses_number_of_characters = Mentee_free_text_responses_number_of_characters) %>% 
+  mutate(Desired_Role = "Mentee",
+                Grade = grade_mentee_num) %>% 
+  mutate (Name = "Dummy") %>% 
+  select(Name, Desired_Role, Grade, free_text_responses_number_of_characters)
+
+missing_for_mentor_word_matching <- 
+  anti_join(
+    mentor_mentee_alignment_allvars0 %>% 
+      distinct(Mentor.Name, grade_mentor_num, Mentor_free_text_responses_number_of_characters),
+    match_distribute_frm_word_matching %>% 
+        filter(!is.na(Mentee.Name)) %>% 
+        distinct(GaleShapley_Matched_Mentor_Name),
+    by = c('Mentor.Name' = 'GaleShapley_Matched_Mentor_Name')) %>% 
+  rename(Name = Mentor.Name,
+         free_text_responses_number_of_characters = Mentor_free_text_responses_number_of_characters) %>% 
+  mutate(Desired_Role = "Mentor",
+                Grade = grade_mentor_num) %>% 
+  mutate (Name = "Dummy") %>% 
+  select(Name, Desired_Role, Grade, free_text_responses_number_of_characters)
+
+missing_for_cos_sim <-
+  rbind(missing_for_mentor_cos_sim,
+        missing_for_mentee_cos_sim)
+
+missing_for_word_matching <-
+  rbind(missing_for_mentor_word_matching,
+        missing_for_mentee_word_matching)
+
+kable(missing_for_cos_sim,
+      caption = "Cosine Similarity: Unmatched") %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped",
+                                        "bordered"),
+                  full_width = FALSE) %>%
+  column_spec(1, bold = TRUE) 
+
+kable(missing_for_word_matching,
+      caption = "Matching Words: Unmatched") %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped",
+                                        "bordered"),
+                  full_width = FALSE) %>%
+  column_spec(1, bold = TRUE)
+```
+
+## Free Text Responses - Number of Characters (Matched Vs. Unmatched Prospective Mentees)
+
+If "Unmatched" does not appear below, all mentees were matched with a mentor.
+
+```{r free_text_summary, include = TRUE, echo = TRUE, eval = params$heavy}
+free_text_length_cos_sim_base <-
+  rbind(
+    missing_for_cos_sim %>% 
+      select(Name, Grade, free_text_responses_number_of_characters) %>% 
+      mutate(Status = "Unmatched"),
+    anti_join(mentor_mentee_alignment_allvars0 %>% 
+                rename(Name = Mentee.Name,
+                       Grade = grade_mentee_num,
+                       free_text_responses_number_of_characters =
+                         Mentee_free_text_responses_number_of_characters) %>% 
+                distinct(Name, Grade, free_text_responses_number_of_characters),
+              missing_for_cos_sim %>% 
+                distinct(Name, Grade)
+              ) %>% 
+    mutate(Status = "Matched")
+  ) %>% 
+  select(-Name)
+
+free_text_length_word_matching_base <-
+  rbind(
+    missing_for_word_matching %>% 
+      select(Name, Grade, free_text_responses_number_of_characters) %>% 
+      mutate(Status = "Unmatched"),
+    anti_join(mentor_mentee_alignment_allvars0 %>% 
+                rename(Name = Mentee.Name,
+                       Grade = grade_mentee_num,
+                       free_text_responses_number_of_characters =
+                         Mentee_free_text_responses_number_of_characters) %>% 
+                distinct(Name, Grade, free_text_responses_number_of_characters),
+              missing_for_word_matching %>% 
+                distinct(Name, Grade)
+              ) %>% 
+    mutate(Status = "Matched")
+  )
+
+free_text_length_cos_sim <- 
+  free_text_length_cos_sim_base %>%
+    group_by(Grade, Status) %>%
+    summarise(
+      Min = round(min(free_text_responses_number_of_characters), 1),
+      Mean = round(mean(free_text_responses_number_of_characters), 1),
+      Median = round(median(free_text_responses_number_of_characters), 1),
+      Max = round(max(free_text_responses_number_of_characters), 1)
+    ) %>% 
+  ungroup()
+
+free_text_length_cos_sim_status_only <- 
+  free_text_length_cos_sim_base %>%
+    group_by(Status) %>%
+    summarise(
+      Min = round(min(free_text_responses_number_of_characters), 1),
+      Mean = round(mean(free_text_responses_number_of_characters), 1),
+      Median = round(median(free_text_responses_number_of_characters), 1),
+      Max = round(max(free_text_responses_number_of_characters), 1)
+    ) %>% 
+  ungroup()
+
+free_text_length_word_matching <- 
+  free_text_length_word_matching_base %>%
+    group_by(Grade, Status) %>%
+    summarise(
+      Min = round(min(free_text_responses_number_of_characters), 1),
+      Mean = round(mean(free_text_responses_number_of_characters), 1),
+      Median = round(median(free_text_responses_number_of_characters), 1),
+      Max = round(max(free_text_responses_number_of_characters), 1)
+    ) %>% 
+  ungroup()
+
+free_text_length_word_matching_status_only <- 
+  free_text_length_word_matching_base %>%
+    group_by(Status) %>%
+    summarise(
+      Min = round(min(free_text_responses_number_of_characters), 1),
+      Mean = round(mean(free_text_responses_number_of_characters), 1),
+      Median = round(median(free_text_responses_number_of_characters), 1),
+      Max = round(max(free_text_responses_number_of_characters), 1)
+    ) %>% 
+  ungroup()
+
+kable(free_text_length_cos_sim,
+      caption = "Cosine Similarity pairing - Length of Free Text Responses") %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped", "bordered"),
+                full_width = F)
+
+kable(free_text_length_word_matching,
+      caption = "Matching Words pairing - Length of Free Text Responses") %>% 
+  kable_styling(bootstrap_options = c("condensed", "striped", "bordered"), 
+                 full_width = F)
+
+kable(free_text_length_cos_sim_status_only,
+      caption = "Cosine Similarity pairing - Length of Free Text Responses (overall)") %>%
+  kable_styling(bootstrap_options = c("condensed", "striped", "bordered"),
+                full_width = F)
+
+kable(free_text_length_word_matching_status_only,
+      caption = "Matching Words pairing - Length of Free Text Responses (overall)") %>%
+  kable_styling(bootstrap_options = c("condensed", "striped", "bordered"), 
+                 full_width = F)
+```
+
+# Correlations of mentor:mentee Comparison Metrics
+
+The *Cosine Similarity* and *Matching Words* ranking used to rank and then Gale-Shapley pair mentors and mentees were modified for only the mentee when their introverted/extroverted preference was matched by the mentor's self-identification.
+
+Otherwise, tney were generally modified based on considerations of survey response alignment like the intro/extro preference and the degree to which the mentor's indicated strongest skills aligned with the skills the mentee most wanted to improve.
+
+These correlations are for the metrics prior to the heavy penalty if the same mentor was matched as last year. 
+
+```{r comparison2, include = TRUE, echo = TRUE}
+
+all_match_types <- 
+  mentor_mentee_alignment_allvars %>% 
+  ungroup() %>% 
+  distinct(Mentor.Name, Mentee.Name, .keep_all = TRUE) %>% 
+  left_join(
+    .,
+    mentor_mentee_alignment_rank_cos_sim_4pivot %>% 
+      distinct(mentor_id, mentee_id, 
+               CS_Pred_compatibility)) %>% 
+  left_join(
+    .,
+    mentor_mentee_with_word_matching_4pivot %>% 
+      distinct(mentor_id, mentee_id, 
+               MW_Pred_compatibility)) %>% 
+  select(-mentor_concatenated_responses_chars,
+         -num_mentees, -mentor_id, -mentee_id,
+         -concatenated_responses_num_mentor_minus_mentee) %>% 
+  select_if(is.numeric)
+
+correlation::correlation(all_match_types) %>% 
+  dplyr::filter(Parameter2 == 'CS_Pred_compatibility') %>% 
+  arrange(desc(r))
+
+correlation::correlation(all_match_types) %>% 
+  dplyr::filter(Parameter2 == 'CS_Pred_compatibility_mentee') %>% 
+  arrange(desc(r))
+
+correlation::correlation(all_match_types) %>% 
+  dplyr::filter(Parameter2 == 'MW_Pred_compatibility') %>% 
+  arrange(desc(r))
+
+correlation::correlation(all_match_types) %>% 
+  dplyr::filter(Parameter2 == 'MW_Pred_compatibility_mentee') %>% 
+  arrange(desc(r))
+
+
+df_corr_input <- all_match_types %>%
+  select(
+           Cosine_Similarity,
+           MW_count,
+           CS_Pred_compatibility,
+           MW_Pred_compatibility,
+           mentor_skills_match,
+           personality_mentee_match,
+           personality_mentor_match,
+           grade_subscore,
+           BG_match,
+           )
+
+wide_table_correlations <- df_corr_input %>%
+  mutate(across(everything(), as.numeric)) %>% 
+  cor(use = "pairwise.complete.obs", method = "pearson") %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "variable")
+```
+
+```{r comparison2_graph, include = TRUE, echo = TRUE, eval = params$heavy}
+
+ggstatsplot::ggcorrmat(
+  all_match_types %>%
+     select(
+           Cosine_Similarity,
+           MW_count,
+           CS_Pred_compatibility,
+           MW_Pred_compatibility,
+           mentor_skills_match,
+           personality_mentee_match,
+           personality_mentor_match,
+           grade_subscore,
+           BG_match,
+           ),
+  title = sprintf("%s: Correlations", year)
+)
+```
+
+## Mentor Grade Minus Mentee Grade - Tables
+
+```{r grade_grade_count_tbl_diff, include = TRUE, echo = TRUE}
+summary_grade_cos_sim <- 
+  round(
+    t(
+      do.call(cbind,
+        lapply(match_full_stat_frm_cos_sim_grade_comp %>% 
+                 select(mentor_minus_mentee_grade_diff),
+               summary))
+    ),
+  2)
+        
+summary_grade_word_matching <- 
+  round(
+    t(
+      do.call(cbind,
+        lapply(match_full_stat_frm_word_matching_grade_comp %>% 
+                 select(mentor_minus_mentee_grade_diff),
+               summary))
+    ),
+  2)
+
+kbl(summary_grade_cos_sim,
+    caption = "Cosine Similarity pairing") %>% 
+  kable_classic(full_width = F) 
+
+kbl(summary_grade_word_matching,
+    caption = "Matching Words pairing") %>% 
+  kable_classic(full_width = F) 
+```
+
+## Average Mentor / Mentee Grade
+
+```{r avg_grade, include = TRUE, echo = TRUE, eval = params$heavy}
+
+avg_grade_cos_sim <- 
+  round(
+    t(
+      do.call(cbind,
+        lapply(match_full_stat_frm_word_matching_grade_comp %>% 
+                 select(grade_mentor_num,
+                        grade_mentee_num),
+               summary))
+    ),
+  2)
+
+avg_grade_word_matching <- 
+  round(
+    t(
+      do.call(cbind,
+        lapply(match_full_stat_frm_cos_sim_grade_comp %>% 
+                 select(grade_mentor_num,
+                        grade_mentee_num),
+               summary))
+    ),
+  2)
+
+kbl(avg_grade_cos_sim,
+    caption = "Cosine Similarity pairing") %>% 
+  kable_classic(full_width = F) 
+
+kbl(avg_grade_word_matching,
+    caption = "Matching Words pairing") %>% 
+  kable_classic(full_width = F) 
+
+```
+
+# Same Matches As The Prior Year
+
+Very unlikely because of scoring penalty when comparing a mentee to the responses of the same mentor as last year.
+
+```{r comparison1, include = TRUE, echo = TRUE}
+match_frm_more_cols_same_cos_sim <- 
+  match_frm_more_cols_cos_sim %>% 
+   mutate(Matching_Type = "Cosine Similarity Mod") %>% 
+   group_by(Matching_Type, .drop = FALSE) %>% 
+    dplyr::filter(Algorithm_Same_Match == TRUE) %>% 
+    summarize(Algorithm_Same_Match_As_Original = n()) %>% 
+   ungroup()
+
+
+match_frm_more_cols_word_matching_same <- 
+  match_frm_more_cols_word_matching %>% 
+   mutate(Matching_Type = "Matching Words Mod") %>% 
+   group_by(Matching_Type, .drop = FALSE) %>% 
+    dplyr::filter(Algorithm_Same_Match == TRUE) %>% 
+    summarize(Algorithm_Same_Match_As_Original = n()) %>% 
+   ungroup()
+if(nrow(match_frm_more_cols_word_matching_same) == 0) {
+  match_frm_more_cols_word_matching_same$Algorithm_Same_Match_As_Original <- 0
+}
+
+all_match_counts <-
+  bind_rows(
+    match_frm_more_cols_same_cos_sim,
+    match_frm_more_cols_word_matching_same)
+
+ggdotchart(all_match_counts, 
+           x = "Matching_Type",
+           y = "Algorithm_Same_Match_As_Original",
+           add = "segments",                             # Add segments from y = 0 to dots
+           rotate = TRUE,                                # Rotate vertically
+           dot.size = 6,                                 # Large dot size
+           label = round(all_match_counts$Algorithm_Same_Match_As_Original),
+           font.label = list(color = "white", size = 9, 
+                             vjust = 0.5),               # Adjust label parameters
+           ggtheme = theme_pubr()                        # ggplot2 theme
+           )
+    
+```
+
+# Discarded participants' data summary (lack of data)
+
+This is the distribution of discarded participants' data. Participants were first discarded (not summarized) if they did not provide a first and last name, did not indicate whether they wanted to be a mentor or mentee, or did not complete the role-specific required survey questions. The only survey questions excluded from that completeness gate are the two anything-to-add or special-considerations text fields.
+
+The next table shows the effect of the new required-response completion gate within this year, by role. It counts only respondents who already passed the identity and role checks, because those are the only rows that can be assigned cleanly to Mentor or Mentee.
+
+```{r required_completion_gate_summary, include = TRUE, echo = TRUE}
+kable(
+  required_completion_exclusions,
+  caption = paste0(
+    year,
+    ": Required-response completion gate summary by role"
+  )
+) %>%
+  kable_styling(
+    bootstrap_options = c("condensed", "striped", "bordered"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(1, bold = TRUE)
+```
+
+Summarized here is one common discarded pattern: participants who did not indicate the introvert or extrovert item for either role. This generally coincides with broader nonresponse.
+
+```{r discarded_participants, include = TRUE, echo = TRUE, eval = params$heavy}
+
+  no_extra_intro <- surv_results_pre_removal %>% 
+    dplyr::filter(is.na(which_of_the_following_best_describes_you_as_a_person) & is.na(which_of_the_following_best_describes_you_as_a_person_2)) 
+
+if(nrow(no_extra_intro) > 1) {  
+  no_extra_intro_tbl <- no_extra_intro %>% 
+    janitor::tabyl(what_is_your_grade_level, would_you_like_to_be_a_mentor_or_a_mentee) %>% 
+    janitor::adorn_totals("row") %>%
+    janitor::adorn_totals("col") %>%
+    janitor::adorn_percentages("all") %>% 
+    janitor::adorn_pct_formatting(digits = 1) %>%
+    janitor::adorn_ns() %>% 
+    janitor::adorn_title()
+  
+  # Add a row number column
+  no_extra_intro <- cbind(Row = 1:nrow(no_extra_intro), no_extra_intro)
+  
+  kable(no_extra_intro %>% 
+          select(Row, display_name, would_you_like_to_be_a_mentor_or_a_mentee,
+                 what_is_your_grade_level),
+        caption = "Discarded Participants (missing data = lack of response)") %>% 
+    kable_styling(bootstrap_options = c("condensed", "striped",
+                                          "bordered"),
+                    full_width = FALSE) 
+  
+  kable(no_extra_intro_tbl,
+        caption = "Discarded Participants (missing data = lack of response)") %>% 
+    kable_styling(bootstrap_options = c("condensed", "striped",
+                                          "bordered"),
+                    full_width = FALSE) %>%
+    column_spec(1, bold = TRUE) %>%
+    row_spec(1, bold = TRUE) 
+}
+```
+
+# Artifacts
+
+```{r artifacts, include = TRUE, echo = TRUE}
+saveRDS(mentee_ranks_cos_sim,           file = file.path(art_dir_u, sprintf("mentee_ranks_cos_sim_%s.rds", year)))
+saveRDS(mentee_ranks_word_matching,     file = file.path(art_dir_u, sprintf("mentee_ranks_word_matching_%s.rds", year)))
+saveRDS(wide_table_percentile_cos_sim,  file = file.path(art_dir_u, sprintf("wide_table_percentile_cos_sim_%s.rds", year)))
+saveRDS(wide_table_percentile_word_matching, file = file.path(art_dir_u, sprintf("wide_table_percentile_word_matching_%s.rds", year)))
+saveRDS(rank_role_frm_cos_sim,          file = file.path(art_dir_u, sprintf("density_plot_cos_sim_%s.rds", year)))
+saveRDS(rank_role_frm_word_matching,    file = file.path(art_dir_u, sprintf("density_plot_word_matching_%s.rds", year)))
+saveRDS(wide_table_correlations,        file = file.path(art_dir_u, sprintf("wide_table_correlations_%s.rds", year)))
+saveRDS(fair_df_word_matching,          file = file.path(art_dir_u, sprintf("fair_df_word_matching_%s.rds", year)))
+saveRDS(fair_df_cos_sim,                file = file.path(art_dir_u, sprintf("fair_df_cos_sim_%s.rds", year)))
+## Write per-u copy (for traceability) and top-level copy (for cross-year aggregation).
+readr::write_csv(
+  required_completion_exclusions,
+  file.path(art_dir_u, sprintf("required_completion_exclusions_%s.csv", year))
+)
+readr::write_csv(
+  required_completion_exclusions,
+  file.path(artifacts_dir, sprintf("exclusion_summary_%d.csv", year))
+)
+
+## Eligible-mentor pool sizes.
+## The repository's `max_rank` column is max(assigned rank), not the pool size, so the
+## candidate-set denominator is not otherwise recoverable from the saved artifacts.
+## Every mentee ranks every mentor row, so the per-mentee eligible set is the
+## post-duplication mentor pool. Recorded here so downstream scripts need not infer it.
+matching_pool <- tibble::tibble(
+  year                         = as.integer(year),
+  n_mentor_pre_duplication     = as.integer(mentor_starter_rows),
+  n_mentor_post_duplication    = as.integer(dplyr::n_distinct(mentor_in$mentor_id)),
+  n_mentee                     = as.integer(nrow(mentee_in)),
+  n_alignment_rows             = as.integer(nrow(mentor_mentee_alignment)),
+  eligible_mentors_per_mentee  = as.integer(
+    nrow(mentor_mentee_alignment) / dplyr::n_distinct(mentor_mentee_alignment$mentee_id)
+  )
+)
+stopifnot(
+  matching_pool$eligible_mentors_per_mentee == matching_pool$n_mentor_post_duplication
+)
+readr::write_csv(matching_pool, file.path(art_dir_u, sprintf("matching_pool_%s.csv", year)))
+readr::write_csv(matching_pool, file.path(artifacts_dir, sprintf("matching_pool_%d.csv", year)))
+
+## Score-component spread, recorded to explain how much leverage u actually has.
+## A mentee's ranking is driven by CS_Pred_compatibility = Cosine_Similarity * 100 +
+## u * overall_survey_match_num (and MW_count + u * overall_survey_match_num). If the
+## survey-match term varies little relative to the text term, changing u cannot
+## reorder anyone, and the u sweep carries no information.
+score_cols <- intersect(c("Cosine_Similarity", "MW_count", "overall_survey_match_num"),
+                        names(mentor_mentee_alignment))
+if (length(score_cols) > 0) {
+  score_components <- purrr::map_dfr(score_cols, function(cl) {
+    v <- as.numeric(mentor_mentee_alignment[[cl]])
+    tibble::tibble(
+      year = as.integer(year), u = as.numeric(u), component = cl,
+      n = sum(!is.na(v)), n_distinct = dplyr::n_distinct(v),
+      min = min(v, na.rm = TRUE), max = max(v, na.rm = TRUE),
+      mean = mean(v, na.rm = TRUE), sd = stats::sd(v, na.rm = TRUE)
+    )
+  }) %>%
+    dplyr::mutate(
+      ## Contribution to score spread: the text term enters as-is (Cosine x 100),
+      ## the survey term enters scaled by u.
+      scaled_sd = dplyr::case_when(
+        component == "Cosine_Similarity"        ~ sd * 100,
+        component == "overall_survey_match_num" ~ sd * u,
+        TRUE                                    ~ sd
+      )
+    )
+  readr::write_csv(score_components,
+                   file.path(art_dir_u, sprintf("score_components_%s.csv", year)))
+}
+```
+
