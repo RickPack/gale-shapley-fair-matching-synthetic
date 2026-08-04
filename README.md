@@ -362,6 +362,37 @@ regenerate from `run_all_synthetic.r`.
 | `tools/check_palette.R` | Colour-vision and contrast gates for committed figures. |
 | `artifacts/` | Committed summary CSVs, the two figures, and the pipeline's Word tables. |
 
+## Deviations from the published paper
+
+The scoring formula used here differs from Pack et al. (2026) in one way.
+
+**Published paper formula:**
+```
+CS_Pred  = (Cosine_Similarity × 100) + u × overall_survey_match_num
+MW_Pred  =  MW_count                 + u × overall_survey_match_num
+```
+
+**This repository:**
+```
+CS_Pred  = z(Cosine_Similarity) + u × z(overall_survey_match_num)
+MW_Pred  = z(MW_count)          + u × z(overall_survey_match_num)
+```
+where `z(·)` denotes standardisation to mean 0, SD 1 across all mentor-mentee pairs
+for that year.
+
+**Why the change.** Even after fixing the overflow-token bug (see "Known issues" item 1
+below), the grade weights in `overall_survey_match_num` (h = 100, with bonuses up to
++125) produce roughly 11 times more standard deviation than `Cosine_Similarity × 100`.
+The paper's `× 100` was a practical approximation; on real data the imbalance is much
+smaller because free-text responses are not token-substituted. In this repository the
+imbalance means *u* controls only the survey-match lever — the NLP term is drowned out
+regardless of *u*. Z-scoring makes *u* the explicit relative-weight parameter: *u* = 1.5
+means the survey component gets 1.5× the leverage of the NLP term, as intended.
+
+**Effect on results.** Rankings, Top-20% rates, and the TOST comparison will differ from
+the paper. The deviation is intentional and confined to this public synthetic
+demonstration; it does not reflect a change to the methodology described in the paper.
+
 ## Known issues and limitations
 
 1. **The *u* sweep is uninformative on synthetic data.** Token substitution flattens
