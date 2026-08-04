@@ -206,29 +206,33 @@ Three checks fail here that pass on the real-employee data modelled by this repo
 (Pack, Lo, Salami & Yao, 2026, in preparation for JSM 2026). Understanding why is the
 more informative result.
 
-**Method equivalence.** The pooled 90% CI here is [−0.76, +5.52] pp, upper bound 0.52
-pp beyond the ±5 pp margin. On the real data the same test yields [−1.5, +2.5] pp,
-inside the margin. The mechanism is the cosine degeneracy described in "Stability across
-parameter settings": token substitution compresses cosine similarity to a standard
-deviation near 0.003, so only Matching Words carries genuine NLP variation. Both methods
-do on real text. The +2.38 pp point estimate is directionally consistent with Pack et
-al. (2026); the wide interval is a power problem driven by a near-flat scoring signal,
-not a discrepancy between analyses.
+**Method equivalence.** The pooled 90% CI here is [−0.76, +5.52] pp; the upper bound
+misses the ±5 pp margin by 0.52 pp. On the real data the same test yields [−1.5, +2.5]
+pp, inside the margin. The point estimate of +2.38 pp is directionally consistent with
+Pack et al. (2026). The failure is a power problem.
+
+Lo, Datta & Salami (2025, *AI and Ethics*) motivated the TOST framework used here
+partly by observing that "if a fairness criterion is barely met or missed, it is often
+uncertain if it should be a 'pass' or 'failure,' if the sample size is not large" — and
+they demonstrate that when the true metric is near the boundary, statistical power
+drops sharply without large samples (their §4, Figs. 1–2). That is precisely the
+situation here: token substitution compresses cosine similarity to a standard deviation
+near 0.003, so the two NLP methods are nearly indistinguishable by text. The effective
+information in the comparison collapses. On real survey responses both methods draw on
+genuine linguistic variation; here, only Matching Words does. The CI is wide not because
+the methods behave differently but because the scoring signal is near-flat.
 
 **Mean percentile gap and FOSD.** The −5.65 pp advantage to senior mentees (90% CI
 [−7.14, −4.20]) is roughly 2 pp wider than the corresponding real-data gap, which runs
-near −3.5 pp with |SMD| 0.22 to 0.25 (Pack et al. 2026). Lo, Datta & Salami (2025,
-*AI and Ethics*) developed the TOST-based fairness framework used here. Their treatment
-— fairness checks as uncertain estimates requiring affirmative evidence of tolerance, not
-merely absence of detected difference — is why −5.65 pp earns a Flag rather than a pass
-near the threshold. On real responses the NLP channel partly modulates the grade-weight
-effect: a senior mentee with sparse or poorly matched text still scores lower than a
-junior mentee with strong word overlap. Token substitution removes that modulation. The
-grade weights run unchecked, the gap widens, and FOSD follows it out of tolerance.
+near −3.5 pp with |SMD| 0.22 to 0.25 (Pack et al. 2026). On real responses the NLP
+channel partly modulates the grade-weight effect: a senior mentee with sparse or poorly
+matched text scores lower than a junior mentee with strong word overlap. Token
+substitution removes that modulation, letting the grade weights run unchecked. The gap
+widens and FOSD follows it out of tolerance.
 
-Neither failure points to a problem with the method. Both are expected from
-de-identification. The disclosures here follow the same convention as the real-data
-analysis: the gaps are stated and not softened.
+Neither failure points to a problem with the algorithm or the methodology. Both are
+expected consequences of de-identification. The disclosures here follow the same
+convention as the real-data analysis: the gaps are stated and not softened.
 
 ## Data provenance
 
