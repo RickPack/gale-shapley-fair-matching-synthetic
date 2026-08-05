@@ -204,10 +204,14 @@ if (length(missing) > 0) {
           as.integer(gsub("[^0-9]", "", grade_mentor)) <= 4L,
           "Grades 1-4", "Grades 5+"
         ),
-        top20_for_mentor = GS_mentor_rank_of_mentee <= floor(MENTOR_TOP_PCT * max_rank)
+        # GS_mentor_rank_of_mentee ranges over the mentee pool, so the cutoff must
+        # use the mentor-scale maximum. max_rank is the mentee-scale maximum (the
+        # worst assigned mentor rank) and made this cutoff several times too strict.
+        mentor_max_rank  = max(GS_mentor_rank_of_mentee, na.rm = TRUE),
+        top20_for_mentor = GS_mentor_rank_of_mentee <= floor(MENTOR_TOP_PCT * mentor_max_rank)
       ) %>%
       select(year, method_label, mentor_grade_group, top20_for_mentor, grade_mentor,
-             GS_mentor_rank_of_mentee, max_rank, mentor_percentile)
+             GS_mentor_rank_of_mentee, mentor_max_rank, max_rank, mentor_percentile)
   })
 
   mentor_balance <- mentor_df %>%

@@ -389,8 +389,10 @@ run_fosd_bootstrap <- function(x_cos = NULL, x_mw = NULL,
     gap_b <- ecdf(xbB)(grid) - ecdf(xbA)(grid)
     sup_vals[b] <- max(gap_b)
     inf_vals[b] <- min(gap_b)
-    dom_mw[b]   <- sup_vals[b] <= 0   # B (second) stochastically smaller/better
-    dom_cos[b]  <- inf_vals[b] >= 0   # A (first) stochastically smaller/better
+    # gap = FB - FA. inf(gap) >= 0 means FB >= FA everywhere, so B carries more
+    # mass at low values: B is stochastically smaller and (lower = better) better.
+    dom_mw[b]   <- inf_vals[b] >= 0   # B (second) stochastically smaller/better
+    dom_cos[b]  <- sup_vals[b] <= 0   # A (first) stochastically smaller/better
   }
 
   list(
