@@ -1,14 +1,14 @@
 # Gale-Shapley mentorship matching — synthetic, reproducible demonstration
 
-A public-safe reproduction of a mentorship-pairing analysis, built entirely on
-**synthetic data**. It pairs mentees to mentors with the Gale-Shapley stable matching
-algorithm under two symmetric text-similarity scoring methods, measures how good the
-resulting assignments are against a random-matching benchmark, and runs the
-repository's predefined fairness checks.
+A reproducible Gale-Shapley mentorship-pairing analysis on fully synthetic data. The
+pipeline matches synthetic mentees to mentors under two text-similarity scoring methods
+(Cosine Similarity and Matching Words), measures each against a random-matching
+benchmark, and reports predefined fairness checks with thresholds and outcomes. The
+synthetic results diverge from the real-data analysis in three specific, measured ways —
+all explained below.
 
-**These synthetic results do not establish performance on real employee data.** No
-real survey response, name, identifier, or business label appears anywhere in this
-repository.
+**No real survey response, name, identifier, or business label appears anywhere in this
+repository.** These results do not establish performance on real employee data.
 
 ## Results
 
@@ -19,14 +19,12 @@ repository.
 | Two methods equivalent within ±5 pp (TOST) | Matching Words − Cosine Similarity = **+2.38 pp** | Pooled 90% CI **[−0.76, +5.52]** pp, margin ±5 pp | **Fail.** The interval breaches the margin, so equivalence is not established on synthetic data. Every individual year fails too. |
 | Predefined fairness checks passed | **1 of 3 binding gates** | Disparate Impact passes (DI 0.902, 90% CI [0.874, 0.932], floor 0.80). Mean percentile gap and FOSD equivalence are both flagged. | The procedure is **not** shown to be fair on these data. Senior mentees (Grades 5+) do measurably better than junior mentees. |
 
-Across approved synthetic simulations, the algorithm produced assigned mentors in the
-top 20% of predicted compatibility for 91.3% (Cosine Similarity) and 92.5% (Matching
-Words) of mentees, and assigned the predicted number-one mentor for 29.9% and 30.4%,
-under the stated simulation and benchmark conditions. **The procedure passed one of
-the three explicitly defined binding fairness checks listed below — the Disparate
-Impact four-fifths gate — and was flagged on the other two, the mean percentile-gap
-and FOSD equivalence tests, at their stated thresholds.** These synthetic results do
-not establish performance on real employee data.
+The algorithm assigned mentors in the top 20% of predicted compatibility to 91.3%
+(Cosine Similarity) and 92.5% (Matching Words) of mentees, and the predicted
+number-one mentor to 29.9% and 30.4%, under the stated simulation and benchmark
+conditions. **Of the three explicitly defined binding fairness gates, one passes —
+the Disparate Impact four-fifths rule — and two are flagged: the mean percentile-gap
+and FOSD equivalence tests, at their stated thresholds.**
 
 > The wording above departs deliberately from a blanket "passed the fairness checks"
 > claim. Two of the three predefined gates do not pass, and a high compatibility rate
@@ -157,9 +155,7 @@ percentage-point margin.
 | 2025 | 78.50% | 82.24% | +3.74 pp | [−5.18, +12.66] | Fail | Fail |
 | **Pooled** | **86.56%** | **88.95%** | **+2.38 pp** | **[−0.76, +5.52]** | **Fail** | Fail |
 
-Source: [`artifacts/speed_session_method_tost.csv`](artifacts/speed_session_method_tost.csv)
-(rates use the pipeline's own percentile denominator, so they sit below the pool-based
-figures in the table at the top).
+<small>Source: [`artifacts/speed_session_method_tost.csv`](artifacts/speed_session_method_tost.csv). Rates use the pipeline's own percentile denominator, so they sit below the pool-based figures in the Results table.</small>
 
 **Equivalence fails here, and that is a property of the synthetic text rather than of
 the methods.** The intervals are wide because token substitution flattens cosine
@@ -196,9 +192,10 @@ mentees**, is well outside the ±3 pp equivalence margin, and is disclosed here 
 than set aside. Full table:
 [`artifacts/fairness_checks.csv`](artifacts/fairness_checks.csv).
 
-The narrow claim these data support: the matching procedure clears the four-fifths
-rule for selection-rate parity across grade groups, and fails equivalence testing on
-the distribution of match quality across those same groups.
+What these data establish: the matching procedure clears the four-fifths rule for
+selection-rate parity across grade groups, and fails equivalence testing on the
+distribution of match quality across those same groups. A high compatibility rate is
+not evidence of fairness — the wording above is deliberate.
 
 ## Relation to the real-data analysis
 
@@ -285,7 +282,7 @@ Rscript report_fairness_checks.R
 Rscript make_wordcloud.R
 Rscript make_match_quality_figure.R
 
-# 5. Validation checks: 130 assertions across seven groups. ~30 s.
+# 5. Validation checks: 144 assertions across nine groups. ~30 s.
 Rscript tests/run_checks.R
 
 # 6. Figure colour-vision and contrast gates.
@@ -346,21 +343,45 @@ The pipeline's own diagnostic figures (cumulative gains, density plots, ECDF/FOS
 sweeps) and its Word summaries are **not** committed. They predate these standards and
 regenerate from `run_all_synthetic.r`.
 
+## Statistical power and the boundary problem
+
+Lo, Datta & Salami (2025, §4, *AI and Ethics*) argue that testing for fairness near a
+decision threshold requires enough power to distinguish near-compliance from breach —
+and that small cohorts routinely fail tests that larger ones pass, not because the
+algorithm changed but because the confidence interval widened. The two failed gates here
+(mean percentile gap, FOSD) are a worked example of that point on 588 matched pairs.
+Disparate Impact, which passes, relies on a ratio of proportions that converges faster
+than a distributional equivalence test.
+
+The [companion power demonstration](https://github.com/RickPack/gale-shapley-fair-matching-demo#the-verdict-flips-as-the-cohort-shrinks)
+makes the mechanism visible without domain knowledge: the same algorithm, the same
+scoring parameters, the same seed — n = 100 mentees fail the equivalence test, n = 250
+pass it. The threshold and margin are constant; only the cohort size changes. 588 matched
+pairs is enough to establish the large advantage over random matching and enough to detect
+the senior-mentee gap; it is not enough to establish method equivalence on
+text-compressed synthetic responses. Reporting a pass or fail without naming the sample
+size is incomplete. These results name it.
+
 ## Repository layout
 
-| Path | What it is |
-|---|---|
-| `data/*.csv` | Synthetic surveys 2023-2025 and prior-year matches 2022-2024. The only inputs. |
-| `build_synthetic_inputs.R` | Builds the synthetic CSVs from the original workbooks. Needs `GS_SOURCE_ROOT`. |
-| `stable_matching_paper_synthetic.rmd` | The de-identified analysis, rendered once per year and *u*. |
-| `run_all_synthetic.r` | Renders across the grid, then writes fairness and summary artifacts. |
-| `analyze_match_quality.R` | Top-20% and number-one estimands, intervals, benchmark. |
-| `report_fairness_checks.R` | The predefined fairness checks with thresholds and outcomes. |
-| `make_wordcloud.R` | The data-provenance figure. |
-| `make_match_quality_figure.R` | The headline figure. |
-| `tests/run_checks.R` | 130 validation assertions across seven groups. |
-| `tools/check_palette.R` | Colour-vision and contrast gates for committed figures. |
-| `artifacts/` | Committed summary CSVs, the two figures, and the pipeline's Word tables. |
+<table width="600">
+<thead>
+<tr><th>Path</th><th>What it is</th></tr>
+</thead>
+<tbody>
+<tr><td><code>data/*.csv</code></td><td>Synthetic surveys 2023–2025 and prior-year matches 2022–2024. The only inputs.</td></tr>
+<tr><td><code>build_synthetic_inputs.R</code></td><td>Builds synthetic CSVs from original workbooks. Needs <code>GS_SOURCE_ROOT</code>.</td></tr>
+<tr><td><code>stable_matching_paper_synthetic.rmd</code></td><td>De-identified analysis, rendered once per year and <em>u</em>.</td></tr>
+<tr><td><code>run_all_synthetic.r</code></td><td>Renders across the grid, writes fairness and summary artifacts.</td></tr>
+<tr><td><code>analyze_match_quality.R</code></td><td>Top-20% and number-one estimands, intervals, benchmark.</td></tr>
+<tr><td><code>report_fairness_checks.R</code></td><td>Predefined fairness checks with thresholds and outcomes.</td></tr>
+<tr><td><code>make_wordcloud.R</code></td><td>Data-provenance figure.</td></tr>
+<tr><td><code>make_match_quality_figure.R</code></td><td>Headline figure.</td></tr>
+<tr><td><code>tests/run_checks.R</code></td><td>144 assertions across nine groups.</td></tr>
+<tr><td><code>tools/check_palette.R</code></td><td>Colour-vision and contrast gates for committed figures.</td></tr>
+<tr><td><code>artifacts/</code></td><td>Committed summary CSVs, the two figures, and pipeline Word tables.</td></tr>
+</tbody>
+</table>
 
 ## Deviations from the published paper
 
@@ -416,6 +437,14 @@ demonstration; it does not reflect a change to the methodology described in the 
    optional. See `audit_report.txt`.
 5. **Synthetic data breaks confidentiality by design, not fidelity.** Qualitative
    patterns may resemble the original analysis; the numbers will not match it.
+
+## References
+
+- D. Gale & L. S. Shapley (1962). *College Admissions and the Stability of Marriage.* American Mathematical Monthly.
+- V. S. Y. Lo, S. Datta & Y. Salami (2025). *Bringing practical statistical science to AI and predictive model fairness testing.* AI and Ethics, 5, 2149–2164.
+- T. Tango (1998). *Equivalence test and confidence interval for the difference in proportions for the paired-sample design.* Statistics in Medicine, 17(8), 891–908.
+- J.-P. Liu, H.-M. Hsueh, E. Hsieh & J. J. Chen (2002). *Tests for equivalence or non-inferiority for paired binary data.* Statistics in Medicine, 21(2), 231–245.
+- EEOC Uniform Guidelines on Employee Selection Procedures — the four-fifths rule.
 
 ## Licence
 
