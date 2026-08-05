@@ -548,6 +548,27 @@ if (!file.exists(mentor_csv)) {
      if (length(path_hits)) path_hits[1] else "")
 }
 
+## I4: mentor_mentee_mutual_sat.csv must exist with required columns and clean paths.
+mutual_csv <- file.path(ART, "mentor_mentee_mutual_sat.csv")
+if (!file.exists(mutual_csv)) {
+  ok("I4 mentor_mentee_mutual_sat.csv exists", FALSE,
+     "Run report_fairness_checks.R to generate it")
+} else {
+  ms <- read_csv(mutual_csv, show_col_types = FALSE)
+  req <- c("u", "method_label", "n", "mentee_sr", "mentor_sr",
+           "gap_mentee_minus_mentor")
+  ok("I4 mentor_mentee_mutual_sat.csv exists with required columns",
+     all(req %in% names(ms)),
+     if (!all(req %in% names(ms)))
+       paste("missing:", paste(setdiff(req, names(ms)), collapse = ", "))
+     else "")
+  lines_m <- readLines(mutual_csv, warn = FALSE)
+  path_hits_m <- grep("[A-Za-z]:[\\\\/]Users[\\\\/]", lines_m, value = TRUE)
+  ok("I4b mentor_mentee_mutual_sat.csv contains no absolute user paths",
+     length(path_hits_m) == 0,
+     if (length(path_hits_m)) path_hits_m[1] else "")
+}
+
 ## ---------------------------------------------------------------- summary ----
 
 cat(sprintf("\n%s\n", strrep("-", 60)))

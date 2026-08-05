@@ -207,7 +207,7 @@ if (length(missing) > 0) {
         top20_for_mentor = GS_mentor_rank_of_mentee <= floor(MENTOR_TOP_PCT * max_rank)
       ) %>%
       select(year, method_label, mentor_grade_group, top20_for_mentor, grade_mentor,
-             GS_mentor_rank_of_mentee, max_rank)
+             GS_mentor_rank_of_mentee, max_rank, mentor_percentile)
   })
 
   mentor_balance <- mentor_df %>%
@@ -259,4 +259,110 @@ if (length(missing) > 0) {
   ), row.names = FALSE)
   cat("\nDI < 0.80 flags a grade-group imbalance in how well mentors are served.\n")
   cat("Wrote:", mentor_out_path, "\n")
+
+  ## ── Beyond Paper 1: mentor vs mentee mutual satisfaction ─────────────────────
+  ##
+  ## Gale-Shapley in mentee-proposing form is mentee-optimal: each mentee lands
+  ## the best stable partner available to them; mentors bear any remaining
+  ## instability. This section puts a number on the resulting gap.
+  ##
+  ## Mentee positive outcome: mentor_percentile <= 20 (matched a top-20% mentor)
+  ## Mentor positive outcome: top20_for_mentor (matched mentee in top 20% of list)
+  ## Gap: mentee SR − mentor SR. A positive gap confirms the algorithm favours
+  ## mentees, as expected from theory. A gap near zero would be surprising.
+  ## No binding gate. Exploratory.
+
+  mutual_sat <- mentor_df %>%
+    mutate(mentee_top20 = mentor_percentile <= MENTOR_TOP_PCT * 100) %>%
+    group_by(method_label) %>%
+    summarise(
+      n           = n(),
+      mentee_sr   = mean(mentee_top20,    na.rm = TRUE),
+      mentor_sr   = mean(top20_for_mentor, na.rm = TRUE),
+      gap_mentee_minus_mentor = mentee_sr - mentor_sr,
+      .groups = "drop"
+    ) %>%
+    mutate(u = opt$u)
+
+  mutual_out_path <- file.path(opt$out, "mentor_mentee_mutual_sat.csv")
+  write_csv(mutual_sat, mutual_out_path)
+
+  cat("\n=== Beyond Paper 1: mentor vs mentee satisfaction at u =", opt$u, "===\n")
+  cat(sprintf(
+    "Mentee positive: mentor_percentile <= %g (top-%g%% mentor)\n",
+    MENTOR_TOP_PCT * 100, MENTOR_TOP_PCT * 100))
+  cat(sprintf(
+    "Mentor positive: matched mentee in top %g%% of own preference list\n\n",
+    MENTOR_TOP_PCT * 100))
+  print(as.data.frame(mutual_sat %>%
+    mutate(across(c(mentee_sr, mentor_sr, gap_mentee_minus_mentor), \(x) round(x, 3)))),
+    row.names = FALSE)
+  cat("\nPositive gap = mentees better served. Expected under mentee-proposing GS.\n")
+  cat("Wrote:", mutual_out_path, "\n")
+
+  ## ── Plain-language summary of all beyond-Paper-1 checks ──────────────────────
+  ##
+  ## Three questions this run adds on top of the Paper 1 predefined checks.
+  ## Written for a reader who skips the tables and reads the bottom line.
+
+  cat("\n", strrep("─", 60), "\n", sep = "")
+  cat("BEYOND PAPER 1 — SUMMARY\n")
+  cat(strrep("─", 60), "\n\n", sep = "")
+
+  ## Pull numbers for the summary
+  mb_pooled <- mentor_balance %>%
+    group_by(method_label) %>%
+    slice(1) %>%
+    ungroup() %>%
+    select(method_label, DI)
+
+  for (meth in unique(mutual_sat$method_label)) {
+    ms  <- mutual_sat %>% filter(method_label == meth)
+    mb  <- mentor_balance %>% filter(method_label == meth)
+    di_val <- mb %>% pull(DI) %>% unique() %>% round(2)
+
+    cat(sprintf("[%s]\n", meth))
+
+    ## 1. Mentor grade balance
+    cat(sprintf(
+      "  1. Mentor grade balance: junior-grade mentors (Grades 1-4) are more\n"
+    ))
+    sr_jr <- mb %>% filter(mentor_grade_group == "Grades 1-4") %>% pull(selection_rate)
+    sr_sr <- mb %>% filter(mentor_grade_group == "Grades 5+")  %>% pull(selection_rate)
+    cat(sprintf(
+      "     likely to get a top-20%% mentee match (%.0f%% vs %.0f%%). DI = %.2f",
+      sr_jr * 100, sr_sr * 100, di_val
+    ))
+    di_pass <- di_val >= 0.80
+    cat(if (di_pass) " — passes the 0.80 threshold.\n" else
+        " — below the 0.80 threshold.\n")
+
+    ## 2. Mentor vs mentee satisfaction gap
+    gap_pct <- round(ms$gap_mentee_minus_mentor * 100, 1)
+    cat(sprintf(
+      "  2. Mentor vs mentee satisfaction: mentees were served better by\n"
+    ))
+    cat(sprintf(
+      "     %.1f pp (mentee SR %.0f%%, mentor SR %.0f%%).\n",
+      gap_pct, ms$mentee_sr * 100, ms$mentor_sr * 100
+    ))
+    if (gap_pct > 0) {
+      cat("     That direction is expected: GS is mentee-optimal by design.\n")
+    } else {
+      cat("     Surprising: mentors outperformed mentees here.\n")
+    }
+
+    cat("\n")
+  }
+
+  ## 3. Paper 1 binding gates recap
+  cat(sprintf(
+    "Paper 1 predefined gates (mentee-side, u = %.2f): %d of %d pass.\n",
+    opt$u, n_pass, n_gate))
+  if (n_pass < n_gate) {
+    failed <- checks %>% filter(role == "Binding gate", outcome != "Pass") %>% pull(check)
+    cat("  Failing:", paste(failed, collapse = "; "), "\n")
+  }
+  cat("\nThese three analyses are not in Paper 1. They are diagnostics for the\n")
+  cat("synthetic repository only.\n")
 }
