@@ -64,7 +64,10 @@ u_is_done <- function(u, out_dir = "artifacts", require_key_files = TRUE, years 
   if (!dir.exists(u_dir)) return(FALSE)
   if (!require_key_files) return(TRUE)
   if (is.null(years)) return(dir.exists(u_dir))
-  needed <- file.path(u_dir, sprintf("fair_df_cos_sim_%s.rds", years))
+  needed <- c(
+    file.path(u_dir, sprintf("fair_df_cos_sim_%s.rds",       years)),
+    file.path(u_dir, sprintf("fair_df_word_matching_%s.rds", years))
+  )
   all(file.exists(needed))
 }
 
@@ -86,7 +89,8 @@ suppressPackageStartupMessages({
   library(rmarkdown); library(readr)
   library(ggplot2); library(ggpubr); library(scales)
   library(flextable); library(officer)
-  library(car) # for Levene/BF (center=median)
+  library(car)      # for Levene/BF (center=median)
+  library(jsonlite)
 })
 
 ## Pandoc is required by rmarkdown::render. Prefer whatever the environment already
@@ -139,8 +143,6 @@ if (runrmd) {
 # -----------------------------------------------
 # 2) Helpers (artifact loading, transforms, plots)
 # -----------------------------------------------
-# helpers/defaults.R  (source this once at startup)
-library(flextable)
 
 # autofit flextables
 ft_default <- function(x, max_width = 0) {
@@ -1198,7 +1200,6 @@ run_bf_between_methods <- function(fair, per_year = FALSE) {
 #     run_bf_between_methods, run_fosd_bootstrap
 # =======================================================================
 
-suppressPackageStartupMessages({ library(jsonlite) })
 
 # ------------- small utilities -------------
 .safe_exists <- function(path) isTRUE(file.exists(path))

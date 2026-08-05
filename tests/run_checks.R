@@ -85,11 +85,11 @@ for (f in survey_files) {
      all(str_detect(d$first_name[!is.na(d$first_name)], "^First[0-9]{4}$")) &&
        all(str_detect(d$last_name[!is.na(d$last_name)], "^Last[0-9]{4}$")))
 
-  bg <- d$business_group[!is.na(d$business_group)]
-  bu <- d$business_unit[!is.na(d$business_unit)]
-  ok(sprintf("A7 %s business labels are relabelled", basename(f)),
-     (length(bg) == 0 || all(str_detect(bg, "^Practice Group [0-9]{2}$"))) &&
-       (length(bu) == 0 || all(str_detect(bu, "^Business Unit [0-9]{2}$"))))
+  ag <- d$affiliation_group[!is.na(d$affiliation_group)]
+  au <- d$affiliation_unit[!is.na(d$affiliation_unit)]
+  ok(sprintf("A7 %s affiliation labels are relabelled", basename(f)),
+     length(ag) > 0 && all(str_detect(ag, "^Group [0-9]{2}$")) &&
+       length(au) > 0 && all(str_detect(au, "^Unit [0-9]{2}$")))
 
   ## No email addresses anywhere in the file.
   flat <- unlist(lapply(d, as.character), use.names = FALSE)
@@ -515,6 +515,38 @@ data_hits <- unlist(lapply(data_csvs, function(f) {
 ok("H4 no absolute user paths in data/ CSVs",
    length(data_hits) == 0,
    if (length(data_hits)) data_hits[1] else "")
+
+## ── I. Beyond-Paper-1 mentor fairness output ─────────────────────────────────
+group("I. Beyond-Paper-1 mentor fairness output")
+
+## I1: mentor_grade_balance.csv must exist and have the required columns.
+mentor_csv <- file.path(ART, "mentor_grade_balance.csv")
+if (!file.exists(mentor_csv)) {
+  ok("I1 mentor_grade_balance.csv exists", FALSE,
+     "Run report_fairness_checks.R to generate it")
+} else {
+  mb <- read_csv(mentor_csv, show_col_types = FALSE)
+  required_cols <- c("u", "method_label", "mentor_grade_group",
+                     "n", "n_top20", "selection_rate", "DI")
+  ok("I1 mentor_grade_balance.csv exists with required columns",
+     all(required_cols %in% names(mb)),
+     if (!all(required_cols %in% names(mb)))
+       paste("missing:", paste(setdiff(required_cols, names(mb)), collapse = ", "))
+     else "")
+
+  ## I2: both grade groups and both methods present at presentation u.
+  u_rows <- mb %>% filter(abs(u - U_PRESENT) < 1e-9, !is.na(DI))
+  ok("I2 both grade groups present at presentation u",
+     nrow(u_rows) >= 4L,
+     sprintf("%d rows at u=%.2f with non-NA DI (expect >=4)", nrow(u_rows), U_PRESENT))
+
+  ## I3: mentor_grade_balance.csv contains no absolute user paths.
+  lines <- readLines(mentor_csv, warn = FALSE)
+  path_hits <- grep("[A-Za-z]:[\\\\/]Users[\\\\/]", lines, value = TRUE)
+  ok("I3 mentor_grade_balance.csv contains no absolute user paths",
+     length(path_hits) == 0,
+     if (length(path_hits)) path_hits[1] else "")
+}
 
 ## ---------------------------------------------------------------- summary ----
 

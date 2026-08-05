@@ -498,7 +498,7 @@ if (mentor_starter_rows > mentee_starter_rows) {
   
   ## shuffle multiple mentee dataframe randomly
   multiple_mentee_mentors_shuffled <- multiple_mentee_mentors[
-    sample(1:nrow(multiple_mentee_mentors)),]
+    sample(seq_len(nrow(multiple_mentee_mentors))), ]
   multiple_mentee_mentors_shuffled_full_mentor_data <- 
     inner_join(mentor_in_base,
                multiple_mentee_mentors_shuffled %>% 
@@ -699,7 +699,7 @@ a <-  5
 # Mentor has no extra/intro preference
 b <-  -5
 # All other mentor extra/intro possibilities
-c <- -15
+pers_other_mentor <- -15
 ## Mentee has extra/introvert preference and mentor matches
 d <-  25
 # Mentee extra/introvert preference matches how mentor identified
@@ -742,7 +742,7 @@ p <- -10
 q <- 20
 # multiplier of # of words extracted from the columns in concat_cols that match between the mentor and mentee responses
 # !!! Ignored in this script because operates on some consideration of 2022 Matching Words - dropped.
-t <-  1
+word_match_multiplier <-  1
 # !!! u SET AT TOP !!!
 # Multiplier by overall_survey_match_num added to cosine_similiarity or word_matching
 # u <- SET AT TOP
@@ -813,7 +813,7 @@ mentor_mentee_alignment_allvars <- mentor_mentee_alignment_allvars0 %>%
   mutate(personality_mentee_match = case_when(
            personality_pair_mentor == extra_intro_mentee ~ a,
            personality_pair_mentor == "No preference" ~ b,
-           TRUE ~ c),
+           TRUE ~ pers_other_mentor),
          personality_mentor_match = case_when(
            personality_pair_mentee == extra_intro_mentor ~ d,
            personality_pair_mentee == personality_pair_mentor ~ e,
@@ -900,13 +900,21 @@ mentor_mentee_alignment <- mentor_mentee_alignment_allvars %>%
 ## parameter: u=1.5 means the survey term gets 1.5x the leverage of the NLP
 ## term, not ~11x. Rankings and headline figures will differ from the paper.
 ## See README "Deviations from the published paper".
+
+## Guard: if all values in a column are identical, scale() returns NaN (SD=0).
+## Return a zero vector so downstream sorting is deterministic rather than crashing.
+scale_safe <- function(x) {
+  z <- scale(x)[, 1]
+  if (all(is.nan(z))) rep(0, length(z)) else z
+}
+
 mentor_mentee_alignment <- mentor_mentee_alignment %>%
   ungroup() %>%
   mutate(
     CS_Pred_compatibility =
-      scale(Cosine_Similarity)[, 1] + (u * scale(overall_survey_match_num)[, 1]),
+      scale_safe(Cosine_Similarity) + (u * scale_safe(overall_survey_match_num)),
     MW_Pred_compatibility =
-      scale(MW_count)[, 1]          + (u * scale(overall_survey_match_num)[, 1])
+      scale_safe(MW_count)          + (u * scale_safe(overall_survey_match_num))
   )
 # End of Weights section
 ####
@@ -1290,10 +1298,9 @@ mentor_matches_mentee_pref_prompt_frm_word_matching <-
               mutate(GaleShapley_Matched_Mentor_Name = Mentor.Name) %>% 
               distinct(GaleShapley_Matched_Mentor_Name, 
                        mentor_concatenated_responses_no_stopwords)) %>% 
-  mutate(Matching_Words = matchwords(mentee_concatenated_responses_no_stopwords, 
-                                     mentee_concatenated_responses_no_stopwords)) %>% 
-  # need to figure out why this is needed
-  distinct(GaleShapley_Matched_Mentor_Name, Mentee.Name, .keep_all = TRUE) %>% 
+  mutate(Matching_Words = matchwords(mentee_concatenated_responses_no_stopwords,
+                                     mentor_concatenated_responses_no_stopwords)) %>%
+  distinct(GaleShapley_Matched_Mentor_Name, Mentee.Name, .keep_all = TRUE) %>%
   select(GaleShapley_Matched_Mentor_Name, Mentee.Name,
          mentee_concatenated_responses_no_stopwords, mentor_concatenated_responses_no_stopwords, 
          Matching_Words, GS_mentee_rank_of_mentor) %>%

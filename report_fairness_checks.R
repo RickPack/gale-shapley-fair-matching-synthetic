@@ -163,3 +163,100 @@ if (n_pass < n_gate) {
 
 cat("\nWrote:\n  ", file.path(opt$out, "fairness_checks.csv"),
     "\n  ", file.path(opt$out, "fairness_selection_rates.csv"), "\n")
+
+## ── Beyond Paper 1: mentor-side grade balance ────────────────────────────────
+##
+## Paper 1 only examines mentee-side fairness (does grade group predict who
+## receives a top-tier mentor?). This section adds the symmetric question: does
+## a mentor's own grade group predict how well the algorithm serves *them* —
+## i.e. are junior-grade mentors consistently matched to lower-ranked mentees?
+##
+## Protected attribute: mentor grade, dichotomised as "Grades 1-4" vs "Grades 5+".
+## Positive outcome: mentor's matched mentee ranks in the top 20 % of that
+##   mentor's own preference list (GS_mentor_rank_of_mentee <= floor(0.20 * max_rank)).
+## Reported: selection rates by grade group and method; DI = SR_min / SR_max.
+## No binding gate — this is exploratory and not part of the predefined checks.
+
+MENTOR_TOP_PCT <- 0.20
+
+u_tag   <- gsub("\\.", "p", sprintf("%.3f", opt$u))   # e.g. 1.5 -> "1p500"
+u_dir   <- file.path(opt$artifacts, paste0("u_", u_tag))
+years   <- c(2023L, 2024L, 2025L)
+methods <- c("cos_sim", "word_matching")
+
+rds_paths <- expand.grid(year = years, method = methods, stringsAsFactors = FALSE) %>%
+  mutate(path = file.path(u_dir, sprintf("fair_df_%s_%d.rds", method, year)))
+
+missing <- rds_paths$path[!file.exists(rds_paths$path)]
+if (length(missing) > 0) {
+  cat(sprintf(
+    "\nBeyond-Paper-1 mentor check skipped: %d RDS file(s) not found.\n",
+    length(missing)))
+  cat("  Missing:", paste(basename(missing), collapse = ", "), "\n")
+} else {
+  mentor_df <- purrr::pmap_dfr(rds_paths, function(year, method, path) {
+    df <- readRDS(path)
+    df %>%
+      mutate(
+        year           = year,
+        method_label   = method,
+        mentor_grade_group = ifelse(
+          as.integer(gsub("[^0-9]", "", grade_mentor)) <= 4L,
+          "Grades 1-4", "Grades 5+"
+        ),
+        top20_for_mentor = GS_mentor_rank_of_mentee <= floor(MENTOR_TOP_PCT * max_rank)
+      ) %>%
+      select(year, method_label, mentor_grade_group, top20_for_mentor, grade_mentor,
+             GS_mentor_rank_of_mentee, max_rank)
+  })
+
+  mentor_balance <- mentor_df %>%
+    group_by(method_label, mentor_grade_group) %>%
+    summarise(
+      n             = n(),
+      n_top20       = sum(top20_for_mentor, na.rm = TRUE),
+      selection_rate = n_top20 / n,
+      .groups = "drop"
+    ) %>%
+    group_by(method_label) %>%
+    mutate(
+      SR_max = max(selection_rate),
+      SR_min = min(selection_rate),
+      DI     = SR_min / SR_max
+    ) %>%
+    ungroup() %>%
+    mutate(u = opt$u)
+
+  mentor_by_year <- mentor_df %>%
+    group_by(year, method_label, mentor_grade_group) %>%
+    summarise(
+      n              = n(),
+      n_top20        = sum(top20_for_mentor, na.rm = TRUE),
+      selection_rate = n_top20 / n,
+      .groups = "drop"
+    ) %>%
+    mutate(u = opt$u)
+
+  out_mentor <- bind_rows(
+    mentor_balance %>%
+      select(u, method_label, mentor_grade_group, n, n_top20, selection_rate, DI),
+    mentor_by_year %>%
+      mutate(DI = NA_real_) %>%
+      select(u, method_label, mentor_grade_group, n, n_top20, selection_rate, DI, year)
+  )
+
+  mentor_out_path <- file.path(opt$out, "mentor_grade_balance.csv")
+  write_csv(out_mentor, mentor_out_path)
+
+  cat("\n=== Beyond Paper 1: mentor-side grade balance at u =", opt$u, "===\n")
+  cat("Positive outcome: mentor's matched mentee in top",
+      scales::percent(MENTOR_TOP_PCT, accuracy = 1),
+      "of mentor's own preference list\n\n")
+  print(as.data.frame(
+    mentor_balance %>%
+      select(method_label, mentor_grade_group, n, n_top20, selection_rate, DI) %>%
+      mutate(selection_rate = round(selection_rate, 3), DI = round(DI, 3))
+  ), row.names = FALSE)
+  cat("\nDI < 0.80 flags a grade-group imbalance in how well mentors are served.\n")
+  cat("Wrote:", mentor_out_path, "\n")
+}

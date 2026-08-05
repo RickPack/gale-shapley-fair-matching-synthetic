@@ -32,17 +32,17 @@ suppressPackageStartupMessages({
 })
 
 parse_args <- function(args) {
-  get <- function(flag, default) {
+  flag_val <- function(flag, default) {
     i <- which(args == flag)
     if (length(i) == 0) return(default)
     if (i + 1 > length(args)) stop(sprintf("%s needs a value.", flag))
     args[i + 1]
   }
-  list(indir  = get("--in", "data"),
-       outdir = get("--out", "data_scrubbed"),
-       seed   = as.integer(get("--seed", "20260804")),
-       n_group = as.integer(get("--n-group", "6")),
-       n_unit  = as.integer(get("--n-unit", "12")),
+  list(indir  = flag_val("--in", "data"),
+       outdir = flag_val("--out", "data_scrubbed"),
+       seed   = as.integer(flag_val("--seed", "20260804")),
+       n_group = as.integer(flag_val("--n-group", "6")),
+       n_unit  = as.integer(flag_val("--n-unit", "12")),
        in_place = "--in-place" %in% args)
 }
 opt <- parse_args(commandArgs(trailingOnly = TRUE))
