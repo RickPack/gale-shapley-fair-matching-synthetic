@@ -17,7 +17,7 @@ repository.** These results do not establish performance on real employee data.
 | Assigned mentor in top 20% of predicted compatibility | **90.4%** (Cosine Similarity)<br>**89.2%** (Matching Words) | 95% CI [87.7, 92.6] and [86.4, 91.6]<br>Random feasible matching: **19.8%** [16.6, 23.0] | About 4.6x and 4.5x the random benchmark. |
 | Assigned mentor is the predicted number one | **26.4%** (Cosine Similarity)<br>**17.8%** (Matching Words) | 95% CI [22.9, 30.1] and [14.8, 21.1]<br>Random feasible matching: **0.47%** [0.0, 1.0] | About 56x and 37x the random benchmark. The two intervals do not overlap, so the methods separate cleanly on this measure. |
 | Two methods equivalent within ±5 pp (TOST) | Cosine Similarity − Matching Words = **+2.88 pp** | Pooled 90% CI **[−0.33, +6.09]** pp, margin ±5 pp | **Fail.** The point estimate sits inside the margin; the interval does not. Every individual year fails too. |
-| Predefined fairness checks passed | **1 of 3 binding gates** | Disparate Impact passes (DI 0.965, 90% CI [0.928, 0.995], floor 0.80). Mean percentile gap and FOSD equivalence are both flagged. | The procedure is **not** shown to be fair on these data. |
+| Predefined fairness checks passed at *u* = 1.5 | **1 of 3 binding gates** | Disparate Impact passes (DI 0.965, 90% CI [0.928, 0.995], floor 0.80). Mean percentile gap and FOSD equivalence are both flagged. | The procedure is **not** shown to be fair on these data. The count is *u*-dependent: 2 of 3 pass at *u* = 0.9, which is what the pipeline's own selector picks. See "Predefined fairness checks". |
 
 The algorithm assigned a top-20% mentor to 90.4% of mentees under Cosine Similarity and
 89.2% under Matching Words, and the predicted number-one mentor to 26.4% and 17.8%, under
@@ -39,7 +39,9 @@ and FOSD equivalence) at their stated thresholds.
 
 - **Populations:** 3 synthetic survey years (2023-2025), plus 3 prior-year match files.
 - **Parameter settings:** 12 values of the survey-match weight *u*, from 0.9 to 2.0 in
-  steps of 0.1. Headline figures use *u* = 1.5.
+  steps of 0.1. Headline figures use *u* = 1.5, which is hardcoded in
+  `run_all_synthetic.r` for comparability with Pack et al. (2026) rather than selected
+  from these data. The pipeline's own selection routine picks *u* = 0.9.
 - **Methods:** Cosine Similarity and Matching Words, compared symmetrically. Neither is
   a baseline.
 - **Benchmark simulations:** 2,000 random feasible matchings per year, seed 42.
@@ -211,6 +213,31 @@ overstate it in the other direction.
 What these data establish: the matching procedure clears the four-fifths rule for
 selection-rate parity across grade groups, and does not clear equivalence testing on the
 distribution of match quality across those same groups.
+
+**This verdict depends on *u*, and *u* = 1.5 is a presentation choice rather than the
+pipeline's own recommendation.** `presentation_u` is hardcoded to 1.5 at the top of
+`run_all_synthetic.r`. The script also runs a selection routine over the whole grid, and
+on these data that routine picks *u* = 0.9
+([`artifacts/Proposed_u_decision.csv`](artifacts/Proposed_u_decision.csv)). At *u* = 0.9
+the fairness picture is materially better:
+
+| Gate | *u* = 1.5 | *u* = 0.9 |
+|---|---|---|
+| Disparate Impact | 0.965, 90% CI [0.928, 0.995] | 0.9998, 90% CI [0.951, 0.999] |
+| Mean percentile gap | −2.00 pp, 90% CI [−3.62, −0.25], **Flag** | +0.19 pp, 90% CI [−1.54, +2.01], **Pass** |
+| FOSD, sup 90% upper | 0.158, **Flag** | 0.116, **Flag** |
+| \|SMD\| | 0.119 | 0.012 |
+
+Two of the three binding gates pass at *u* = 0.9 against one at *u* = 1.5, and the mean
+gap reverses sign, slightly favouring junior mentees. FOSD flags at both. Reporting
+"1 of 3 binding gates" without naming the *u* it was measured at would overstate the
+result, so the headline table names it. The *u* = 1.5 figures remain the headline for
+comparability with Pack et al. (2026), which uses that value.
+
+Treat the *u* = 0.9 column as a sensitivity check rather than a competing headline.
+`Proposed_u_decision.csv` marks that row `passes_all = TRUE` while its own
+`FOSD_sup_CI_U` of 0.116 exceeds the 0.10 margin, so the selection routine and the gate
+table disagree about what passing means. See "Known issues" item 3.
 
 ## Relation to the real-data analysis
 
@@ -470,23 +497,34 @@ does not reflect a change to the methodology described in the paper.
    and no paired estimator is implemented anywhere in this repository. The ±5 pp verdict is
    Fail under both formulas on the current data, so no published conclusion changes, but the
    interval width is not trustworthy as reported.
-3. **The Disparate Impact gate is one-sided.** Lo, Datta & Salami test DI against a
+3. **The *u* selection routine and the gate table disagree, and it reassigns
+   `presentation_u` too late.** `run_all_synthetic.r` hardcodes `presentation_u <- 1.5`,
+   writes most figures and Word tables at that value, and only then overwrites it with
+   the selected *u* (0.9 on these data) before re-running combined diagnostics. The
+   result is an artifact folder tagged with two different *u* values:
+   `Diagnostics_Combined_u1p500.docx` and `Diagnostics_Combined_u0p900.docx` both exist
+   and were written in the same run. Everything quoted in this README is the *u* = 1.5
+   set, and `fairness_checks.csv` carries its `u` in column 1, but the split is a trap.
+   Separately, `Proposed_u_decision.csv` marks *u* = 0.9 `passes_all = TRUE` while
+   recording `FOSD_sup_CI_U = 0.116` against a 0.10 margin, so the routine's pass rule
+   is not the gate table's pass rule.
+4. **The Disparate Impact gate is one-sided.** Lo, Datta & Salami test DI against a
    two-sided acceptable range (their §3.3, typically [0.80, 1.20] or [0.80, 1.25]). This
    pipeline gates on the 90% lower bound against a 0.80 floor only, so a DI above the upper
    bound would not be caught. With DI at 0.965 the distinction does not bind here.
-4. **Aggregate stability hides individual churn.** Pooled Top-20% rates vary by about two
+5. **Aggregate stability hides individual churn.** Pooled Top-20% rates vary by about two
    percentage points across the *u* grid while up to 278 of 591 mentees are matched to a
    different mentor. Do not read the flat summary as evidence that *u* is unimportant.
-5. **`results_mentor_balance.csv` previously mislabelled its pool column.**
+6. **`results_mentor_balance.csv` previously mislabelled its pool column.**
    `n_mentor_slots` was computed as `max(assigned rank)` while its own footnote described it
    as the total mentor entries given to Gale-Shapley. It now reads the pool size recorded in
    `matching_pool_<year>.csv` (206 / 287 / 124).
-6. **Response filtering is looser than full-survey completion.** A response is retained when
+7. **Response filtering is looser than full-survey completion.** A response is retained when
    it has an identity, a mentor/mentee indicator, and at least one of the two
    personality-description fields. The two free-text "anything to add" items are optional.
    Per-year counts are in
    [`artifacts/exclusion_summary_all_years.csv`](artifacts/exclusion_summary_all_years.csv).
-7. **Synthetic data breaks confidentiality by design, not fidelity.** Qualitative patterns
+8. **Synthetic data breaks confidentiality by design, not fidelity.** Qualitative patterns
    may resemble the original analysis; the numbers will not match it.
 
 ## References
