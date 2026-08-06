@@ -70,6 +70,22 @@ bench <- bind_rows(
   mutate(panel = factor(panel, levels = panel_levels),
          year  = factor(year, levels = c("2023", "2024", "2025", "Pooled")))
 
+## Caption counts are read from the artifacts rather than typed in. A hardcoded
+## caption silently goes stale the moment the pipeline is re-run on different
+## inputs, and the figure is the one place a stale number is invisible to grep.
+yr_rows <- hl %>%
+  filter(year != "Pooled") %>%
+  distinct(year, n_mentees, n_mentor_pool) %>%
+  arrange(year)
+pooled_n <- hl %>% filter(year == "Pooled") %>% pull(n_mentees) %>% unique()
+
+caption_counts <- sprintf(
+  "Mentees: %s; %s pooled. Eligible mentor pool: %s.",
+  paste(sprintf("%d (%s)", yr_rows$n_mentees, yr_rows$year), collapse = "; "),
+  format(pooled_n[1], big.mark = ","),
+  paste(yr_rows$n_mentor_pool, collapse = ", ")
+)
+
 dodge <- position_dodge(width = 0.55)
 
 p <- ggplot(est, aes(x = year, y = value, colour = method)) +
@@ -87,7 +103,7 @@ p <- ggplot(est, aes(x = year, y = value, colour = method)) +
                       "u = 1.5; denominator is each mentee's post-duplication eligible mentor pool."),
     x = NULL, y = NULL,
     caption = paste0(
-      "Mentees: 197 (2023), 284 (2024), 107 (2025); 588 pooled. Eligible mentor pool: 206, 284, 124.\n",
+      caption_counts, "\n",
       "Benchmark: 2,000 simulated random feasible matchings per year, seed 42. Synthetic data only."
     )
   ) +
