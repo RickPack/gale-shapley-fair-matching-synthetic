@@ -366,19 +366,22 @@ committed CSVs and never touches the source workbooks.
 
 | Component | Version |
 |---|---|
-| R | 4.4.1 (2024-06-14 ucrt) |
+| R | 4.6.1 (2026-06-24 ucrt) |
 | Pandoc | required by `rmarkdown::render`; the runner falls back to the RStudio-bundled copy |
-| dplyr / tidyr / purrr / tibble | 1.2.1 / 1.3.2 / 1.2.2 / 3.2.1 |
-| readr / stringr | 2.1.5 / 1.5.1 |
-| ggplot2 / ggpubr / scales | 4.0.3 / 0.6.3 / 1.4.0 |
+| dplyr / tidyr / purrr / tibble | 1.2.1 / 1.3.2 / 1.2.2 / 3.3.1 |
+| readr / stringr | 2.2.0 / 1.6.0 |
+| ggplot2 / ggpubr / scales | 4.0.3 / 1.0.0 / 1.4.0 |
 | ggwordcloud | 0.6.2 |
-| flextable / officer | 0.9.12 / 0.7.5 |
-| rmarkdown / knitr / kableExtra | 2.31 / 1.51 / 1.4.0 |
+| flextable / officer | 0.10.0 / 0.7.6 |
+| rmarkdown / knitr / kableExtra | 2.31 / 1.51 / 1.4.1 |
 | car / janitor / openxlsx / PropCIs | 3.1.5 / 2.2.1 / 4.2.8.1 / 0.3.0 |
 | jsonlite | 2.0.0 |
 
 Random number generation uses R's default Mersenne-Twister with
 `sample.kind = "Rejection"`, so results reproduce on R 3.6.0 and later.
+Regenerating under a different R build can move stored values in the last one or
+two significant digits. That is floating-point arithmetic, not the seed drifting,
+and every figure this README quotes is rounded far above it.
 
 ## Figures
 
