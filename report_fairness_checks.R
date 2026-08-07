@@ -174,6 +174,11 @@ cat("\nWrote:\n  ", file.path(opt$out, "fairness_checks.csv"),
 ## Protected attribute: mentor grade, dichotomised as "Grades 1-4" vs "Grades 5+".
 ## Positive outcome: mentor's matched mentee ranks in the top 20 % of that
 ##   mentor's own preference list (GS_mentor_rank_of_mentee <= floor(0.20 * max_rank)).
+## Unit of analysis: the mentor, counted once per year. A mentor duplicated to
+##   cover the mentee pool holds more than one mentee; the rate below is the mean
+##   of each mentor's own share of top-20 % mentees, so duplication does not buy
+##   a mentor extra weight. Mentors whose grade does not parse are dropped, not
+##   collected into a third group.
 ## Reported: selection rates by grade group and method; DI = SR_min / SR_max.
 ## No binding gate — this is exploratory and not part of the predefined checks.
 
@@ -194,32 +199,67 @@ if (length(missing) > 0) {
     length(missing)))
   cat("  Missing:", paste(basename(missing), collapse = ", "), "\n")
 } else {
-  mentor_df <- purrr::pmap_dfr(rds_paths, function(year, method, path) {
+  ## One row per mentee-mentor assignment. `method` inside mutate() resolves to
+  ## the RDS's own display column ("Cosine Similarity" / "Matching Words"), not
+  ## the pmap argument of the same name; .data$ states that rather than leaving
+  ## the output labels resting on which name data masking happens to reach first.
+  assignments <- purrr::pmap_dfr(rds_paths, function(year, method, path) {
     df <- readRDS(path)
     df %>%
       mutate(
         year           = year,
-        method_label   = method,
-        mentor_grade_group = ifelse(
-          as.integer(gsub("[^0-9]", "", grade_mentor)) <= 4L,
-          "Grades 1-4", "Grades 5+"
+        method_label   = .data$method,
+        mentor_grade_num = suppressWarnings(
+          as.integer(gsub("[^0-9]", "", grade_mentor))
         ),
+        mentor_grade_group = ifelse(mentor_grade_num <= 4L, "Grades 1-4", "Grades 5+"),
         # GS_mentor_rank_of_mentee ranges over the mentee pool, so the cutoff must
         # use the mentor-scale maximum. max_rank is the mentee-scale maximum (the
         # worst assigned mentor rank) and made this cutoff several times too strict.
         mentor_max_rank  = max(GS_mentor_rank_of_mentee, na.rm = TRUE),
         top20_for_mentor = GS_mentor_rank_of_mentee <= floor(MENTOR_TOP_PCT * mentor_max_rank)
       ) %>%
-      select(year, method_label, mentor_grade_group, top20_for_mentor, grade_mentor,
-             GS_mentor_rank_of_mentee, mentor_max_rank, max_rank, mentor_percentile)
+      select(year, method_label, Mentor_corp_id, mentor_grade_group, mentor_grade_num,
+             top20_for_mentor, grade_mentor, GS_mentor_rank_of_mentee,
+             mentor_max_rank, max_rank, mentor_percentile)
   })
+
+  ## Drop mentors whose grade does not parse to a number. Left in, they form a
+  ## third group, and the SR_max / SR_min below would take their extremes: DI
+  ## would then describe a comparison nobody defined, silently. The mentee side
+  ## already filters !is.na(grade_group) at load (run_all_synthetic.r).
+  n_unparsed <- sum(is.na(assignments$mentor_grade_group))
+  if (n_unparsed > 0) {
+    cat(sprintf(
+      "\nMentor check: dropped %d assignment(s) whose mentor grade did not parse.\n",
+      n_unparsed))
+  }
+  assignments <- assignments %>% filter(!is.na(mentor_grade_group))
+
+  ## The unit of analysis is the mentor, not the assignment. Full pairing
+  ## duplicates a mentor whenever the mentee pool needs it, so a mentor holding
+  ## two mentees contributed two rows above and was counted twice. That is not
+  ## neutral: in these data 11.5% of Grades 5+ mentors are duplicated against
+  ## 3.2% of Grades 1-4, so assignment weighting loads the two arms unequally.
+  ## Collapse to one row per mentor per year and carry that mentor's own share
+  ## of top-20% mentees, which gives every mentor equal weight and reduces to
+  ## the plain rate in years where nobody is duplicated.
+  mentor_df <- assignments %>%
+    group_by(year, method_label, Mentor_corp_id, mentor_grade_group) %>%
+    summarise(
+      n_mentees       = n(),
+      n_top20_mentees = sum(top20_for_mentor, na.rm = TRUE),
+      mentor_share    = mean(top20_for_mentor, na.rm = TRUE),
+      .groups = "drop"
+    )
 
   mentor_balance <- mentor_df %>%
     group_by(method_label, mentor_grade_group) %>%
     summarise(
-      n             = n(),
-      n_top20       = sum(top20_for_mentor, na.rm = TRUE),
-      selection_rate = n_top20 / n,
+      n              = n(),                # distinct mentors, counted once per year
+      n_assignments  = sum(n_mentees),
+      n_top20        = sum(n_top20_mentees),
+      selection_rate = mean(mentor_share),
       .groups = "drop"
     ) %>%
     group_by(method_label) %>%
@@ -231,22 +271,35 @@ if (length(missing) > 0) {
     ungroup() %>%
     mutate(u = opt$u)
 
+  ## Mirrors stopifnot(nrow(counts) == 2L) on the mentee side: DI is defined for
+  ## exactly two groups, so refuse to publish a number if that is not what we have.
+  grp_counts <- mentor_balance %>% count(method_label, name = "n_groups")
+  if (any(grp_counts$n_groups != 2L)) {
+    stop(sprintf(
+      "DI needs exactly 2 mentor grade groups per method; got %s.",
+      paste(sprintf("%s=%d", grp_counts$method_label, grp_counts$n_groups),
+            collapse = ", ")))
+  }
+
   mentor_by_year <- mentor_df %>%
     group_by(year, method_label, mentor_grade_group) %>%
     summarise(
       n              = n(),
-      n_top20        = sum(top20_for_mentor, na.rm = TRUE),
-      selection_rate = n_top20 / n,
+      n_assignments  = sum(n_mentees),
+      n_top20        = sum(n_top20_mentees),
+      selection_rate = mean(mentor_share),
       .groups = "drop"
     ) %>%
     mutate(u = opt$u)
 
   out_mentor <- bind_rows(
     mentor_balance %>%
-      select(u, method_label, mentor_grade_group, n, n_top20, selection_rate, DI),
+      select(u, method_label, mentor_grade_group, n, n_assignments, n_top20,
+             selection_rate, DI),
     mentor_by_year %>%
       mutate(DI = NA_real_) %>%
-      select(u, method_label, mentor_grade_group, n, n_top20, selection_rate, DI, year)
+      select(u, method_label, mentor_grade_group, n, n_assignments, n_top20,
+             selection_rate, DI, year)
   )
 
   mentor_out_path <- file.path(opt$out, "mentor_grade_balance.csv")
@@ -255,10 +308,12 @@ if (length(missing) > 0) {
   cat("\n=== Beyond Paper 1: mentor-side grade balance at u =", opt$u, "===\n")
   cat("Positive outcome: mentor's matched mentee in top",
       scales::percent(MENTOR_TOP_PCT, accuracy = 1),
-      "of mentor's own preference list\n\n")
+      "of mentor's own preference list\n")
+  cat("n = distinct mentors (once per year); rate averages each mentor's own share.\n\n")
   print(as.data.frame(
     mentor_balance %>%
-      select(method_label, mentor_grade_group, n, n_top20, selection_rate, DI) %>%
+      select(method_label, mentor_grade_group, n, n_assignments, n_top20,
+             selection_rate, DI) %>%
       mutate(selection_rate = round(selection_rate, 3), DI = round(DI, 3))
   ), row.names = FALSE)
   cat("\nDI < 0.80 flags a grade-group imbalance in how well mentors are served.\n")
@@ -275,18 +330,29 @@ if (length(missing) > 0) {
   ## Gap: mentee SR − mentor SR. A positive gap confirms the algorithm favours
   ## mentees, as expected from theory. A gap near zero would be surprising.
   ## No binding gate. Exploratory.
+  ##
+  ## The two sides count different populations, so they are computed separately:
+  ## mentees are never duplicated and each holds exactly one row, while mentors
+  ## are, so the mentor side uses the same one-row-per-mentor-per-year basis as
+  ## the DI above rather than counting a two-mentee mentor twice.
 
-  mutual_sat <- mentor_df %>%
+  mentee_side <- assignments %>%
     mutate(mentee_top20 = mentor_percentile <= MENTOR_TOP_PCT * 100) %>%
     group_by(method_label) %>%
-    summarise(
-      n           = n(),
-      mentee_sr   = mean(mentee_top20,    na.rm = TRUE),
-      mentor_sr   = mean(top20_for_mentor, na.rm = TRUE),
+    summarise(n = n(), mentee_sr = mean(mentee_top20, na.rm = TRUE), .groups = "drop")
+
+  mentor_side <- mentor_df %>%
+    group_by(method_label) %>%
+    summarise(n_mentors = n(), mentor_sr = mean(mentor_share), .groups = "drop")
+
+  mutual_sat <- mentee_side %>%
+    left_join(mentor_side, by = "method_label") %>%
+    mutate(
       gap_mentee_minus_mentor = mentee_sr - mentor_sr,
-      .groups = "drop"
+      u = opt$u
     ) %>%
-    mutate(u = opt$u)
+    select(method_label, n, n_mentors, mentee_sr, mentor_sr,
+           gap_mentee_minus_mentor, u)
 
   mutual_out_path <- file.path(opt$out, "mentor_mentee_mutual_sat.csv")
   write_csv(mutual_sat, mutual_out_path)
@@ -313,42 +379,38 @@ if (length(missing) > 0) {
   cat("BEYOND PAPER 1 — SUMMARY\n")
   cat(strrep("─", 60), "\n\n", sep = "")
 
-  ## Pull numbers for the summary
-  mb_pooled <- mentor_balance %>%
-    group_by(method_label) %>%
-    slice(1) %>%
-    ungroup() %>%
-    select(method_label, DI)
-
   for (meth in unique(mutual_sat$method_label)) {
     ms  <- mutual_sat %>% filter(method_label == meth)
     mb  <- mentor_balance %>% filter(method_label == meth)
-    di_val <- mb %>% pull(DI) %>% unique() %>% round(2)
+    di_raw <- mb %>% pull(DI) %>% unique()
 
     cat(sprintf("[%s]\n", meth))
 
-    ## 1. Mentor grade balance
-    cat(sprintf(
-      "  1. Mentor grade balance: junior-grade mentors (Grades 1-4) are more\n"
-    ))
+    ## 1. Mentor grade balance. Read the direction off the rates rather than
+    ##    asserting it: this prose is the part a reader quotes, and on data where
+    ##    the senior group leads, a fixed sentence states the disparity backwards.
     sr_jr <- mb %>% filter(mentor_grade_group == "Grades 1-4") %>% pull(selection_rate)
     sr_sr <- mb %>% filter(mentor_grade_group == "Grades 5+")  %>% pull(selection_rate)
+    ahead <- if (sr_jr >= sr_sr) "junior-grade mentors (Grades 1-4)" else
+                                 "senior-grade mentors (Grades 5+)"
+    cat(sprintf("  1. Mentor grade balance: %s are more\n", ahead))
     cat(sprintf(
       "     likely to get a top-20%% mentee match (%.0f%% vs %.0f%%). DI = %.2f",
-      sr_jr * 100, sr_sr * 100, di_val
+      max(sr_jr, sr_sr) * 100, min(sr_jr, sr_sr) * 100, di_raw
     ))
-    di_pass <- di_val >= 0.80
-    cat(if (di_pass) " — passes the 0.80 threshold.\n" else
+    ## Gate on the unrounded DI. Rounding first lets 0.795 print as "0.80 —
+    ## passes", which is the one sentence here that must not be generous.
+    cat(if (di_raw >= 0.80) " — passes the 0.80 threshold.\n" else
         " — below the 0.80 threshold.\n")
 
     ## 2. Mentor vs mentee satisfaction gap
     gap_pct <- round(ms$gap_mentee_minus_mentor * 100, 1)
-    cat(sprintf(
-      "  2. Mentor vs mentee satisfaction: mentees were served better by\n"
-    ))
+    served  <- if (gap_pct >= 0) "mentees were served better by" else
+                                 "mentors were served better by"
+    cat(sprintf("  2. Mentor vs mentee satisfaction: %s\n", served))
     cat(sprintf(
       "     %.1f pp (mentee SR %.0f%%, mentor SR %.0f%%).\n",
-      gap_pct, ms$mentee_sr * 100, ms$mentor_sr * 100
+      abs(gap_pct), ms$mentee_sr * 100, ms$mentor_sr * 100
     ))
     if (gap_pct > 0) {
       cat("     That direction is expected: GS is mentee-optimal by design.\n")

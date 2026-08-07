@@ -1,17 +1,17 @@
-u,method_label,mentor_grade_group,n,n_top20,selection_rate,DI,year
-1.5,Cosine Similarity,Grades 1-4,96,88,0.9166666666666666,0.9212121212121213,NA
-1.5,Cosine Similarity,Grades 5+,495,418,0.8444444444444444,0.9212121212121213,NA
-1.5,Matching Words,Grades 1-4,91,83,0.9120879120879121,0.9056144578313253,NA
-1.5,Matching Words,Grades 5+,500,413,0.826,0.9056144578313253,NA
-1.5,Cosine Similarity,Grades 1-4,36,34,0.9444444444444444,NA,2023
-1.5,Cosine Similarity,Grades 5+,161,135,0.8385093167701864,NA,2023
-1.5,Matching Words,Grades 1-4,33,29,0.8787878787878788,NA,2023
-1.5,Matching Words,Grades 5+,164,134,0.8170731707317073,NA,2023
-1.5,Cosine Similarity,Grades 1-4,37,34,0.918918918918919,NA,2024
-1.5,Cosine Similarity,Grades 5+,250,214,0.856,NA,2024
-1.5,Matching Words,Grades 1-4,37,33,0.8918918918918919,NA,2024
-1.5,Matching Words,Grades 5+,250,213,0.852,NA,2024
-1.5,Cosine Similarity,Grades 1-4,23,20,0.8695652173913043,NA,2025
-1.5,Cosine Similarity,Grades 5+,84,69,0.8214285714285714,NA,2025
-1.5,Matching Words,Grades 1-4,21,21,1,NA,2025
-1.5,Matching Words,Grades 5+,86,66,0.7674418604651163,NA,2025
+u,method_label,mentor_grade_group,n,n_assignments,n_top20,selection_rate,DI,year
+1.5,Cosine Similarity,Grades 1-4,93,96,88,0.9139784946236559,0.9302464228934818,NA
+1.5,Cosine Similarity,Grades 5+,444,495,418,0.8502252252252253,0.9302464228934818,NA
+1.5,Matching Words,Grades 1-4,88,91,83,0.9090909090909091,0.907683741648107,NA
+1.5,Matching Words,Grades 5+,449,500,413,0.8251670378619154,0.907683741648107,NA
+1.5,Cosine Similarity,Grades 1-4,36,36,34,0.9444444444444444,NA,2023
+1.5,Cosine Similarity,Grades 5+,161,161,135,0.8385093167701864,NA,2023
+1.5,Matching Words,Grades 1-4,33,33,29,0.8787878787878788,NA,2023
+1.5,Matching Words,Grades 5+,164,164,134,0.8170731707317073,NA,2023
+1.5,Cosine Similarity,Grades 1-4,34,37,34,0.9117647058823529,NA,2024
+1.5,Cosine Similarity,Grades 5+,199,250,214,0.871859296482412,NA,2024
+1.5,Matching Words,Grades 1-4,34,37,33,0.8823529411764706,NA,2024
+1.5,Matching Words,Grades 5+,199,250,213,0.8567839195979899,NA,2024
+1.5,Cosine Similarity,Grades 1-4,23,23,20,0.8695652173913043,NA,2025
+1.5,Cosine Similarity,Grades 5+,84,84,69,0.8214285714285714,NA,2025
+1.5,Matching Words,Grades 1-4,21,21,21,1,NA,2025
+1.5,Matching Words,Grades 5+,86,86,66,0.7674418604651163,NA,2025

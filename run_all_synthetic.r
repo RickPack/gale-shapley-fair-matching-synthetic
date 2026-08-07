@@ -1742,7 +1742,11 @@ dec <- auto_sel$decision %>%
   dplyr::mutate(
     gap_margin = 3,
     DI_def     = pmax(0, 0.80 - .data[[diL_col]]),
-    gap_def_L  = pmax(0, gap_margin - (-.data[[mgL_col]])),
+    # Deficiency = how far the CI bound sits OUTSIDE the margin, 0 when inside.
+    # Same form as .compute_deficits() above; the earlier
+    # pmax(0, gap_margin - (-mgL)) read the lower side backwards, reporting a
+    # deficiency for bounds inside the margin and 0 for bounds outside it.
+    gap_def_L  = pmax(0, (-gap_margin) - .data[[mgL_col]]),
     gap_def_U  = pmax(0, .data[[mgU_col]] - gap_margin)
   ) %>%
   dplyr::select(

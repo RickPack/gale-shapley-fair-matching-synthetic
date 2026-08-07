@@ -546,6 +546,27 @@ if (!file.exists(mentor_csv)) {
   ok("I3 mentor_grade_balance.csv contains no absolute user paths",
      length(path_hits) == 0,
      if (length(path_hits)) path_hits[1] else "")
+
+  ## I5: the mentor-side DI counts mentors, not assignments. Full pairing
+  ## duplicates a mentor when the mentee pool needs it, and duplication is not
+  ## spread evenly across the grade groups, so counting assignments loads the
+  ## two arms of DI unequally. n must therefore stay below n_assignments
+  ## wherever any mentor holds more than one mentee.
+  if (all(c("n", "n_assignments") %in% names(mb))) {
+    never_exceeds <- all(mb$n <= mb$n_assignments, na.rm = TRUE)
+    collapsed     <- any(mb$n < mb$n_assignments, na.rm = TRUE)
+    ok("I5 mentor DI counts distinct mentors, not assignments",
+       never_exceeds && collapsed,
+       if (!never_exceeds) "n exceeds n_assignments in at least one row"
+       else if (!collapsed)
+         "n == n_assignments everywhere; duplicated mentors were not collapsed"
+       else sprintf("%d mentors over %d assignments at u=%.2f",
+                    sum(mb$n[is.na(mb$year)]), sum(mb$n_assignments[is.na(mb$year)]),
+                    U_PRESENT))
+  } else {
+    ok("I5 mentor DI counts distinct mentors, not assignments", FALSE,
+       "n_assignments column absent -- rates are assignment-weighted again")
+  }
 }
 
 ## I4: mentor_mentee_mutual_sat.csv must exist with required columns and clean paths.
