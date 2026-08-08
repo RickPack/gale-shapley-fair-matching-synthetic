@@ -16,7 +16,7 @@ repository.** These results do not establish performance on real employee data.
 |---|---|---|---|
 | Assigned mentor in top 20% of predicted compatibility | **90.4%** (Cosine Similarity)<br>**89.2%** (Matching Words) | 95% CI [87.7, 92.6] and [86.4, 91.6]<br>Random feasible matching: **19.8%** [16.6, 23.0] | About 4.6x and 4.5x the random benchmark. |
 | Assigned mentor is the predicted number one | **26.4%** (Cosine Similarity)<br>**17.8%** (Matching Words) | 95% CI [22.9, 30.1] and [14.8, 21.1]<br>Random feasible matching: **0.47%** [0.0, 1.0] | About 56x and 37x the random benchmark. The two intervals do not overlap, so the methods separate cleanly on this measure. |
-| Two methods equivalent within ±5 pp (TOST) | Cosine Similarity − Matching Words = **+2.88 pp** | Pooled 90% CI **[−0.33, +6.09]** pp, margin ±5 pp | **Fail.** The point estimate sits inside the margin; the interval does not. Every individual year fails too. |
+| Two methods equivalent within ±5 pp (TOST) | Cosine Similarity − Matching Words = **+3.21 pp** | Pooled 90% CI **[+0.72, +5.77]** pp, margin ±5 pp | **Fail.** The point estimate sits inside the margin; the interval does not. Every individual year fails too. |
 | Predefined fairness checks passed at *u* = 1.5 | **1 of 3 binding gates** | Disparate Impact passes (DI 0.965, 90% CI [0.928, 0.995], floor 0.80). Mean percentile gap and FOSD equivalence are both flagged. | The procedure is **not** shown to be fair on these data. The count is *u*-dependent: 2 of 3 pass at *u* = 0.9, which is what the pipeline's own selector picks. See "Predefined fairness checks". |
 
 The algorithm assigned a top-20% mentor to 90.4% of mentees under Cosine Similarity and
@@ -142,38 +142,47 @@ percentage-point margin.
 
 | | Cosine Similarity | Matching Words | Cos − MW | 90% CI | ±5 pp | ±2 pp |
 |---|---|---|---|---|---|---|
-| 2023 | 88.83% | 82.23% | +6.60 pp | [+0.79, +12.40] | Fail | Fail |
-| 2024 | 88.50% | 86.41% | +2.09 pp | [−2.46, +6.64] | Fail | Fail |
-| 2025 | 87.85% | 89.72% | −1.87 pp | [−8.96, +5.22] | Fail | Fail |
-| **Pooled** | **88.49%** | **85.62%** | **+2.88 pp** | **[−0.33, +6.09]** | **Fail** | Fail |
+| 2023 | 84.77% | 82.74% | +2.03 pp | [−2.48, +6.63] | Fail | Fail |
+| 2024 | 89.55% | 86.76% | +2.79 pp | [−0.47, +6.19] | Fail | Fail |
+| 2025 | 87.85% | 81.31% | +6.54 pp | [−0.53, +13.89] | Fail | Fail |
+| **Pooled** | **87.65%** | **84.43%** | **+3.21 pp** | **[+0.72, +5.77]** | **Fail** | Fail |
 
 <small>Source: [`artifacts/speed_session_method_tost.csv`](artifacts/speed_session_method_tost.csv). Rates use the pipeline's own percentile denominator, so they sit below the pool-based figures in the Results table.</small>
 
-Equivalence is not established at either margin. The pooled point estimate of +2.88 pp
-lies inside ±5 pp, but the interval reaches +6.09 pp, and a TOST conclusion depends on the
+Equivalence is not established at either margin. The pooled point estimate of +3.21 pp
+lies inside ±5 pp, but the interval reaches +5.77 pp, and a TOST conclusion depends on the
 interval rather than the point. This is a precision result. At 591 matched pairs the study
 cannot certify a difference this small as small enough, which is the situation Lo, Datta &
 Salami describe when a metric sits near its decision boundary.
 
-The 2023 interval is the exception worth naming: [+0.79, +12.40] pp excludes zero, so in
-that year Cosine Similarity selected top-20% mentors at a reliably higher rate than
-Matching Words. Pooled across years that difference shrinks and the interval covers zero.
+The pooled interval is the one worth naming: [+0.72, +5.77] pp excludes zero, so across the
+three years combined Cosine Similarity selected top-20% mentors at a reliably higher rate
+than Matching Words. No individual year does — each single-year interval covers zero, and
+the largest single-year gap, 2025's +6.54 pp, carries an interval half again as wide as the
+pooled one. Pooling buys the precision that separates the methods; it does not create the
+difference.
 
 The methods also separate clearly on the number-one rate (26.4% against 17.8%, with
 non-overlapping intervals), which the ±5 pp Top-20% test is not designed to detect.
 Overlapping confidence intervals do not establish equivalence, and non-overlapping ones on
 a second measure do not establish that the methods are interchangeable on the first.
 
-**One caveat about how this interval is computed.** `tost_sp_equiv()` in
-`run_all_synthetic.r` implements the independent-samples Wald standard error from Lo,
-Datta & Salami (2025), Eqs. (5)-(6), faithfully. That formula assumes two independent
-groups. This design is paired: the same 591 mentees are scored under both methods, so the
-two arms are positively correlated and the independent-samples interval is wider than it
-should be. Measured on these data, the pooled 90% interval is [−0.10, +6.53] pp under the
-independent formula and [+0.72, +5.71] pp under a paired (McNemar) standard error, with
-Tango's score interval giving [+0.72, +5.77] pp. The verdict is Fail under all three here,
-so the conclusion in the table stands, but the reported interval is the wrong width and no
-paired estimator exists anywhere in this repository. See "Known issues" item 2.
+**How this interval is computed.** The design is paired: the same 591 mentees are scored
+under both methods, so the two arms are positively correlated. Lo, Datta & Salami (2025),
+Eqs. (5)-(6), give an independent-samples Wald standard error, which assumes two separate
+groups and therefore overstates the width here. `build_method_tost_table()` in
+`run_all_synthetic.r` uses the paired score interval of Tango (1998) instead, via
+`PropCIs::scoreci.mp` on the discordant pairs — 50 mentees selected under Cosine Similarity
+only, 31 under Matching Words only, 468 under both. The independent formula would report
+[−0.10, +6.53] pp on the same data against the paired [+0.72, +5.77] pp, an SE of 0.0201
+against 0.0152. The ±5 pp verdict is Fail either way, so the conclusion is unchanged; the
+width is not. `tost_sp_equiv_wald()` is retained in the script for that comparison and
+feeds no reported number.
+
+One orientation trap is worth flagging for anyone reading the code: `scoreci.mp(x, y, n)`
+estimates `(y - x)/n`, so producing the Cosine − Matching Words difference this README
+reports requires passing the discordant counts in the opposite order to the one the
+argument names suggest.
 
 ### Predefined fairness checks
 
@@ -237,7 +246,7 @@ comparability with Pack et al. (2026), which uses that value.
 Treat the *u* = 0.9 column as a sensitivity check rather than a competing headline.
 `Proposed_u_decision.csv` marks that row `passes_all = TRUE` while its own
 `FOSD_sup_CI_U` of 0.116 exceeds the 0.10 margin, so the selection routine and the gate
-table disagree about what passing means. See "Known issues" item 3.
+table disagree about what passing means. See "Known issues" item 2.
 
 ## Relation to the real-data analysis
 
@@ -245,10 +254,10 @@ Some checks fail here that pass on the real-employee data this repository models
 Lo, Salami & Yao, 2026, in preparation for JSM 2026). The comparisons in this section rest
 on that paper, not on anything computable from this repository.
 
-**Method equivalence.** The pooled 90% CI here is [−0.33, +6.09] pp, missing the ±5 pp
-margin by 1.09 pp at the upper end. On the real data the same test yields [−1.5, +2.5] pp,
+**Method equivalence.** The pooled 90% CI here is [+0.72, +5.77] pp, missing the ±5 pp
+margin by 0.77 pp at the upper end. On the real data the same test yields [−1.5, +2.5] pp,
 inside the margin. Both the synthetic and real point estimates are small; the synthetic
-interval is wider.
+interval is wider and, unlike the real one, excludes zero.
 
 **Mean percentile gap.** The −2.00 pp advantage to senior mentees here (90% CI
 [−3.62, −0.25], |SMD| = 0.119) is *smaller* in magnitude than the corresponding real-data
@@ -492,42 +501,33 @@ does not reflect a change to the methodology described in the paper.
    advantage to senior mentees on mean percentile. Both flags are precision results rather
    than large measured disparities, which is a reason to withhold a fairness claim, not a
    reason to discount them.
-2. **The method-equivalence interval uses the wrong variance formula.**
-   `tost_sp_equiv()` applies Lo, Datta & Salami's independent-samples Wald standard error to
-   a paired design in which the same 591 mentees are scored under both methods. The
-   published interval is therefore wider than the design warrants (SE 0.0201 against 0.0152
-   paired). Tango (1998) and Liu et al. (2002) describe the estimator this design calls for,
-   and no paired estimator is implemented anywhere in this repository. The ±5 pp verdict is
-   Fail under both formulas on the current data, so no published conclusion changes, but the
-   interval width is not trustworthy as reported.
-3. **The *u* selection routine and the gate table disagree, and it reassigns
-   `presentation_u` too late.** `run_all_synthetic.r` hardcodes `presentation_u <- 1.5`,
-   writes most figures and Word tables at that value, and only then overwrites it with
-   the selected *u* (0.9 on these data) before re-running combined diagnostics. The
-   result is an artifact folder tagged with two different *u* values:
-   `Diagnostics_Combined_u1p500.docx` and `Diagnostics_Combined_u0p900.docx` both exist
-   and were written in the same run. Everything quoted in this README is the *u* = 1.5
-   set, and `fairness_checks.csv` carries its `u` in column 1, but the split is a trap.
+2. **The *u* selection routine and the gate table disagree about what passing means.**
+   `Proposed_u_decision.csv` marks the *u* = 0.9 row `passes_all = TRUE` while that same
+   row's `FOSD_sup_CI_U` of 0.116 exceeds the 0.10 margin. The selector and the published
+   gate table apply different rules, so the selector's recommendation should be read as a
+   sensitivity check rather than a competing headline. The pipeline now reports that
+   recommendation without acting on it (see below), so nothing published depends on the
+   disagreement, but the two rules have not been reconciled.
    Separately, `Proposed_u_decision.csv` marks *u* = 0.9 `passes_all = TRUE` while
    recording `FOSD_sup_CI_U = 0.116` against a 0.10 margin, so the routine's pass rule
    is not the gate table's pass rule.
-4. **The Disparate Impact gate is one-sided.** Lo, Datta & Salami test DI against a
+3. **The Disparate Impact gate is one-sided.** Lo, Datta & Salami test DI against a
    two-sided acceptable range (their §3.3, typically [0.80, 1.20] or [0.80, 1.25]). This
    pipeline gates on the 90% lower bound against a 0.80 floor only, so a DI above the upper
    bound would not be caught. With DI at 0.965 the distinction does not bind here.
-5. **Aggregate stability hides individual churn.** Pooled Top-20% rates vary by about two
+4. **Aggregate stability hides individual churn.** Pooled Top-20% rates vary by about two
    percentage points across the *u* grid while up to 278 of 591 mentees are matched to a
    different mentor. Do not read the flat summary as evidence that *u* is unimportant.
-6. **`results_mentor_balance.csv` previously mislabelled its pool column.**
+5. **`results_mentor_balance.csv` previously mislabelled its pool column.**
    `n_mentor_slots` was computed as `max(assigned rank)` while its own footnote described it
    as the total mentor entries given to Gale-Shapley. It now reads the pool size recorded in
    `matching_pool_<year>.csv` (206 / 287 / 124).
-7. **Response filtering is looser than full-survey completion.** A response is retained when
+6. **Response filtering is looser than full-survey completion.** A response is retained when
    it has an identity, a mentor/mentee indicator, and at least one of the two
    personality-description fields. The two free-text "anything to add" items are optional.
    Per-year counts are in
    [`artifacts/exclusion_summary_all_years.csv`](artifacts/exclusion_summary_all_years.csv).
-8. **Synthetic data breaks confidentiality by design, not fidelity.** Qualitative patterns
+7. **Synthetic data breaks confidentiality by design, not fidelity.** Qualitative patterns
    may resemble the original analysis; the numbers will not match it.
 
 ## References
@@ -540,8 +540,8 @@ does not reflect a change to the methodology described in the paper.
   convention used for every 90% CI here, and the power argument.
 - T. Tango (1998). *Equivalence test and confidence interval for the difference in
   proportions for the paired-sample design.* Statistics in Medicine, 17(8), 891-908.
-  Describes the paired estimator this repository's design calls for; see "Known issues"
-  item 2.
+  Supplies the paired score interval this repository uses for the method-equivalence
+  test, via `PropCIs::scoreci.mp`.
 - J.-P. Liu, H.-M. Hsueh, E. Hsieh & J. J. Chen (2002). *Tests for equivalence or
   non-inferiority for paired binary data.* Statistics in Medicine, 21(2), 231-245. The same
   problem for paired binary outcomes.
