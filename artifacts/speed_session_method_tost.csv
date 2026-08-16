@@ -1,5 +1,5 @@
-Year,n_Cosine,Rate_Cosine,n_MW,Rate_MW,Delta_rate_cos_minus_mw,CI_L_90pct,CI_U_90pct,p_value,Equiv_primary_delta5pp,Equiv_strict_delta2pp
-2023,197,0.8883,197,0.8223,0.066,0.0079,0.124,0.6748,Fail,Fail
-2024,287,0.885,287,0.8641,0.0209,-0.0246,0.0664,0.1462,Fail,Fail
-2025,107,0.8785,107,0.8972,-0.0187,-0.0896,0.0522,0.2339,Fail,Fail
-Overall,591,0.8849,591,0.8562,0.0288,-0.0033,0.0609,0.1382,Fail,Fail
+Year,n_Cosine,Rate_Cosine,n_MW,Rate_MW,Delta_rate_cos_minus_mw,CI_L_90pct,CI_U_90pct,p_value,Equiv_primary_delta5pp,Equiv_strict_delta2pp,n_discordant_cos_only,n_discordant_mw_only
+2023,197,0.8477,197,0.8274,0.0203,-0.0248,0.0663,0.1394,Fail,Fail,16,12
+2024,287,0.8955,287,0.8676,0.0279,-0.0047,0.0619,0.1369,Fail,Fail,20,12
+2025,107,0.8785,107,0.8131,0.0654,-0.0053,0.1389,1,Fail,Fail,14,7
+Overall,591,0.8765,591,0.8443,0.0321,0.0072,0.0577,0.1231,Fail,Fail,50,31

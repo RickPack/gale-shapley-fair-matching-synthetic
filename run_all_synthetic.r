@@ -25,8 +25,19 @@ set.seed(42)
 
 args_all <- commandArgs(trailingOnly = FALSE)
 file_arg <- sub("^--file=", "", args_all[grep("^--file=", args_all)])
-script_dir <- if (length(file_arg) > 0) dirname(normalizePath(file_arg[1])) else normalizePath(".")
-indir  <- normalizePath(script_dir, winslash = "/", mustWork = TRUE)
+script_dir <- if (length(file_arg) > 0) {
+  # Rscript run_all_synthetic.r  (or R CMD BATCH)
+  dirname(normalizePath(file_arg[1]))
+} else if (requireNamespace("rstudioapi", quietly = TRUE) &&
+           rstudioapi::isAvailable() &&
+           nzchar(rstudioapi::getSourceEditorContext()$path)) {
+  # RStudio Source/Run button on an interactive session
+  dirname(normalizePath(rstudioapi::getSourceEditorContext()$path))
+} else {
+  # Last resort: assume the working directory is already the repo root
+  normalizePath(".")
+}
+indir <- script_dir
 setwd(indir)
 if (!file.exists("build_synthetic_inputs.R")) {
   stop("Missing build_synthetic_inputs.R in the current folder.")
@@ -2088,9 +2099,26 @@ us %>%
   
 
 
-presentation_u <- auto_sel$u_selected   # <- use this value in your figures & diagnostics
+# S8 fix (2026-08-08). This line used to read
+#   presentation_u <- auto_sel$u_selected
+# which overwrote the u = 1.5 set at the top of the file, but only for the
+# outputs built BELOW it. Figures and Word tables written above kept 1.5 while
+# the results tables, the method TOST and the combined diagnostics silently
+# switched to the selector's choice (0.9). One run emitted both
+# Diagnostics_Combined_u1p500.docx and _u0p900.docx, and the published TOST
+# table was computed at a different u from the fairness-checks table beside it.
+# presentation_u now stays fixed at the value declared at the top of the file,
+# as its comment there always claimed. The selector's recommendation is kept
+# separately and reported, not silently applied.
+auto_selected_u <- auto_sel$u_selected
+if (!isTRUE(all.equal(auto_selected_u, presentation_u))) {
+  message(sprintf(paste0("Selector recommends u = %.2f; presentation stays at ",
+                         "u = %.2f (declared at the top of this script). ",
+                         "Every published table uses the presentation u."),
+                  auto_selected_u, presentation_u))
+}
 
-# Re-run combined diagnostics and paper feed with the chosen u (optional, but recommended)
+# Re-run combined diagnostics and paper feed with the presentation u
 combined_out <- run_combined_diagnostics(presentation_u, years)
 
 print(dec, width = Inf)
@@ -2273,7 +2301,11 @@ mentor_balance <- build_mentor_balance_table(presentation_u, years)
 # AI and Ethics 5:2149-2164, applied to the difference in Top-p% selection
 # rates between the two scoring methods (Statistical Parity framework).
 # Equivalence is concluded when the (1-2*alpha)*100% CI lies within [-delta, delta].
-tost_sp_equiv <- function(x1, n1, x2, n2, delta = 0.05, alpha = 0.05) {
+# Legacy independent-samples Wald TOST. VERIFICATION ONLY as of 2026-08-08: both
+# methods score the SAME mentees, so the arms are correlated and this SE is wrong
+# for the design. Retained so the paired result can be compared against the
+# construction Lo et al. (2025) published. Not used for any reported interval.
+tost_sp_equiv_wald <- function(x1, n1, x2, n2, delta = 0.05, alpha = 0.05) {
   # x1/n1 = successes/total for Method 1 (Cosine Similarity)
   # x2/n2 = successes/total for Method 2 (Matching Words)
   # delta  = equivalence margin (theta in Lo et al.)
@@ -2300,36 +2332,112 @@ tost_sp_equiv <- function(x1, n1, x2, n2, delta = 0.05, alpha = 0.05) {
   )
 }
 
+# ---- Paired construction (Tango 1998 score interval) ----
+# Both methods score the same mentees, so the two arms are correlated and the
+# independent-samples SE above overstates the interval width. The paired score
+# interval of Tango (1998), as implemented in PropCIs::scoreci.mp, is the
+# construction the design calls for.
+#
+# ORIENTATION TRAP -- read before changing the argument order.
+# scoreci.mp(x, y, n) estimates (y - x)/n. This repo reports Cosine - Matching
+# Words throughout (column Delta_rate_cos_minus_mw, and the README headline), so
+# with b = Cosine-only and c = MW-only discordant counts, the call must be
+# scoreci.mp(c, b, n) to yield (b - c)/n = Rate(Cosine) - Rate(MW).
+# NOTE: Paper 1 uses the OPPOSITE orientation (MW - Cosine) and therefore calls
+# scoreci.mp(b, c, n). Do not copy its argument order into this file.
+tango_ci_cs_minus_mw <- function(b, c, n, conf = 0.90) {
+  ci <- PropCIs::scoreci.mp(c, b, n, conf.level = conf)
+  c(lower = ci$conf.int[1], upper = ci$conf.int[2])
+}
+
+# TOST p-value by CI inversion: the smallest alpha at which the (1 - 2*alpha)
+# Tango interval still fits inside [-delta, +delta]. Stays entirely inside
+# scoreci.mp, so there is no hand-derived formula to verify against Tango (1998).
+tost_p_tango <- function(b, c, n, delta) {
+  inside <- function(conf) {
+    ci <- tango_ci_cs_minus_mw(b, c, n, conf)
+    ci[["lower"]] > -delta && ci[["upper"]] < delta
+  }
+  if (!inside(1e-6))  return(1)
+  if (inside(0.9999)) return(.Machine$double.eps)
+  lo <- 1e-6; hi <- 0.9999
+  for (i in 1:60) {
+    mid <- (lo + hi) / 2
+    if (inside(mid)) lo <- mid else hi <- mid
+  }
+  (1 - lo) / 2
+}
+
+tost_paired_tango <- function(b, c, n, x11, delta = 0.05, alpha = 0.05) {
+  p1   <- (x11 + b) / n            # Rate(Cosine Similarity)
+  p2   <- (x11 + c) / n            # Rate(Matching Words)
+  diff <- (b - c) / n              # Cosine - MW; same orientation as the CI
+  ci   <- tango_ci_cs_minus_mw(b, c, n, conf = 1 - 2 * alpha)
+  list(p1 = p1, p2 = p2, diff = diff,
+       ci_L = ci[["lower"]], ci_U = ci[["upper"]],
+       p_value = tost_p_tango(b, c, n, delta),
+       pass = (ci[["lower"]] > -delta) && (ci[["upper"]] < delta),
+       delta = delta, alpha = alpha,
+       ci_level_pct = (1 - 2 * alpha) * 100)
+}
+
 build_method_tost_table <- function(fair_u, thr_pos_pct = 20,
                                      delta_primary = 0.05,
                                      delta_strict  = 0.02,
-                                     alpha = 0.05) {
-  # Per-year plus overall TOST for top-p% selection rate parity.
+                                     alpha = 0.05,
+                                     pair_id_col = "Mentee_corp_id") {
+  # Per-year plus overall PAIRED TOST for top-p% selection rate parity.
   # Positive outcome = mentor_percentile <= thr_pos_pct.
+  if (!pair_id_col %in% names(fair_u))
+    stop(sprintf(paste0("Paired TOST needs a mentee identifier shared by both ",
+                        "methods; '%s' not found. Columns: %s"),
+                 pair_id_col, paste(names(fair_u), collapse = ", ")))
   fair2 <- fair_u %>%
-    dplyr::mutate(positive = as.integer(mentor_percentile <= thr_pos_pct))
+    dplyr::mutate(
+      positive = as.integer(mentor_percentile <= thr_pos_pct),
+      # Mentee ids are only unique WITHIN a year -- the same CID recurs across
+      # cohorts -- so the pairing key must carry the year.
+      .pair_key = paste(.data$year, .data[[pair_id_col]])
+    )
   years_all <- c(as.character(sort(unique(fair2$year))), "Overall")
   purrr::map_dfr(years_all, function(yr) {
     sub <- if (yr == "Overall") fair2 else
              fair2 %>% dplyr::filter(year == suppressWarnings(as.integer(yr)))
     cos <- sub %>% dplyr::filter(method == "Cosine Similarity")
     mw  <- sub %>% dplyr::filter(method == "Matching Words")
-    x1 <- sum(cos$positive, na.rm = TRUE); n1 <- nrow(cos)
-    x2 <- sum(mw$positive,  na.rm = TRUE); n2 <- nrow(mw)
-    r1 <- tost_sp_equiv(x1, n1, x2, n2, delta = delta_primary, alpha = alpha)
-    r2 <- tost_sp_equiv(x1, n1, x2, n2, delta = delta_strict,  alpha = alpha)
+    dup <- sum(duplicated(cos$.pair_key)) + sum(duplicated(mw$.pair_key))
+    if (dup > 0)
+      stop(sprintf(paste0("Pairing key '%s' is not unique within year x method ",
+                          "(%d duplicates at %s). Fix the key before running ",
+                          "the paired TOST."), pair_id_col, dup, yr))
+    j <- dplyr::inner_join(
+      cos %>% dplyr::select(.pair_key, pos_cos = positive),
+      mw  %>% dplyr::select(.pair_key, pos_mw  = positive),
+      by = ".pair_key")
+    dropped <- (nrow(cos) - nrow(j)) + (nrow(mw) - nrow(j))
+    if (dropped > 0)
+      message(sprintf(paste0("Paired TOST (%s): %d method-rows lacked a partner ",
+                             "and were dropped from pairing."), yr, dropped))
+    b   <- sum(j$pos_cos == 1L & j$pos_mw == 0L)   # Cosine-only
+    cc  <- sum(j$pos_cos == 0L & j$pos_mw == 1L)   # MW-only
+    x11 <- sum(j$pos_cos == 1L & j$pos_mw == 1L)
+    n   <- nrow(j)
+    r1 <- tost_paired_tango(b, cc, n, x11, delta = delta_primary, alpha = alpha)
+    r2 <- tost_paired_tango(b, cc, n, x11, delta = delta_strict,  alpha = alpha)
     tibble::tibble(
       Year                        = yr,
-      n_Cosine                    = n1,
+      n_Cosine                    = n,
       Rate_Cosine                 = round(r1$p1, 4),
-      n_MW                        = n2,
+      n_MW                        = n,
       Rate_MW                     = round(r1$p2, 4),
       Delta_rate_cos_minus_mw     = round(r1$diff, 4),
       CI_L_90pct                  = round(r1$ci_L, 4),
       CI_U_90pct                  = round(r1$ci_U, 4),
       p_value                     = round(r1$p_value, 4),
       Equiv_primary_delta5pp      = ifelse(r1$pass, "Pass", "Fail"),
-      Equiv_strict_delta2pp       = ifelse(r2$pass, "Pass", "Fail")
+      Equiv_strict_delta2pp       = ifelse(r2$pass, "Pass", "Fail"),
+      n_discordant_cos_only       = b,
+      n_discordant_mw_only        = cc
     )
   })
 }

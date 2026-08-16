@@ -266,8 +266,10 @@ more_1_submissions_surv_results <- surv_results %>%
   add_count() %>% 
   dplyr::filter(n > 1) %>% 
   janitor::clean_names()
-# Unsure if 51 (affiliation_group) is needed
-surv_results_concat <- surv_results %>% 
+# affiliation_group is intentionally excluded from concatenated text -- Paper 1's
+# concat_cols has no org field; affiliation_group feeds only BG_mentor/BG_mentee
+# (prefer_mentee_same_BG), computed separately below from surv_results_logical.
+surv_results_concat <- surv_results %>%
   select(
     display_name,
     mentor_or_mentee = would_you_like_to_be_a_mentor_or_a_mentee,
@@ -280,8 +282,7 @@ surv_results_concat <- surv_results %>%
     what_topics_are_you_interested_in_please_choose_your_top_3,
     what_are_your_expectations_for_this_program_please_choose_your_top_3,
     please_tell_us_in_your_own_words_why_you_want_to_be_a_mentee_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences,
-    are_there_any_special_considerations_that_you_would_like_known_when_your_application_is_reviewed_is_your_desire_to_participate_based_on_certain_criteria_that_you_have_in_mind_that_was_not_covered_in_the_previous_questions_please_list_that_information_here_2,
-    affiliation_group
+    are_there_any_special_considerations_that_you_would_like_known_when_your_application_is_reviewed_is_your_desire_to_participate_based_on_certain_criteria_that_you_have_in_mind_that_was_not_covered_in_the_previous_questions_please_list_that_information_here_2
   )
 
 surv_results_concat_skills_improve <- surv_results_concat %>% 
