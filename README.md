@@ -342,7 +342,7 @@ Rscript report_fairness_checks.R
 Rscript make_wordcloud.R
 Rscript make_match_quality_figure.R
 
-# 5. Validation checks: 144 assertions across nine groups. ~30 s.
+# 5. Validation checks: 145 assertions across nine groups. ~30 s.
 Rscript tests/run_checks.R
 
 # 6. Figure colour-vision and contrast gates.
@@ -460,7 +460,7 @@ without its sample size is incomplete.
 | `report_fairness_checks.R` | Predefined fairness checks with thresholds and outcomes. |
 | `make_wordcloud.R` | Data-provenance figure. |
 | `make_match_quality_figure.R` | Headline figure. |
-| `tests/run_checks.R` | 144 assertions across nine groups. |
+| `tests/run_checks.R` | 145 assertions across nine groups. |
 | `tools/check_palette.R` | Colour-vision and contrast gates for committed figures. |
 | `artifacts/` | Committed summary CSVs, the two figures, and pipeline Word tables. |
 
