@@ -25,8 +25,19 @@ set.seed(42)
 
 args_all <- commandArgs(trailingOnly = FALSE)
 file_arg <- sub("^--file=", "", args_all[grep("^--file=", args_all)])
-script_dir <- if (length(file_arg) > 0) dirname(normalizePath(file_arg[1])) else normalizePath(".")
-indir  <- normalizePath(script_dir, winslash = "/", mustWork = TRUE)
+script_dir <- if (length(file_arg) > 0) {
+  # Rscript run_all_synthetic.r  (or R CMD BATCH)
+  dirname(normalizePath(file_arg[1]))
+} else if (requireNamespace("rstudioapi", quietly = TRUE) &&
+           rstudioapi::isAvailable() &&
+           nzchar(rstudioapi::getSourceEditorContext()$path)) {
+  # RStudio Source/Run button on an interactive session
+  dirname(normalizePath(rstudioapi::getSourceEditorContext()$path))
+} else {
+  # Last resort: assume the working directory is already the repo root
+  normalizePath(".")
+}
+indir <- script_dir
 setwd(indir)
 if (!file.exists("build_synthetic_inputs.R")) {
   stop("Missing build_synthetic_inputs.R in the current folder.")
