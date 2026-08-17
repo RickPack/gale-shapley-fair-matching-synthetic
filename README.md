@@ -2,15 +2,28 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A reproducible Gale-Shapley mentorship-pairing analysis built entirely on synthetic data.
-The pipeline matches synthetic mentees to mentors under two text-similarity scoring
-methods (Cosine Similarity and Matching Words), measures each against a random-matching
-benchmark, and reports predefined fairness checks with their thresholds and outcomes.
-Where the synthetic results depart from the real-data analysis this repository models,
-the departure is stated rather than smoothed over.
+A reproducible Gale-Shapley mentorship-pairing analysis in R, built entirely on synthetic
+data. **90.4% of synthetic mentees are paired with a mentor in the top 20% of their own
+predicted-compatibility ranking, against 19.8% under random feasible matching — about 4.6x
+the benchmark, across 591 matched pairs and 2,000 simulated random matchings per year. And
+two of the three predefined fairness gates do not pass, which is stated here in the first
+paragraph rather than left for a reader to find.**
 
-**No real survey response, name, identifier, or business label appears anywhere in this
-repository.** These results do not establish performance on real employee data.
+The pipeline matches synthetic mentees to mentors under two text-similarity scoring
+methods (Cosine Similarity and Matching Words), measures each against that random-matching
+benchmark, and reports every predefined fairness check with its threshold and outcome,
+passing or not. Where the synthetic results depart from the analysis this repository
+models, the departure is stated rather than smoothed over.
+
+> **Independent personal work, synthetic data only.** This is a personal project, built
+> and published on my own time and equipment. It contains **no employer code, data,
+> configuration, or output**; every input under `data/` is generated, and **no real survey
+> response, name, identifier, or business label appears anywhere in this repository.** It
+> is **not affiliated with, endorsed by, or derived from any employer's proprietary
+> implementation**, and nothing here is a statement about any real program or population.
+> These results do not establish performance on real employee data. A minimal,
+> dependency-free companion implementation of the core statistics lives in
+> [gale-shapley-fair-matching-demo](https://github.com/RickPack/gale-shapley-fair-matching-demo).
 
 ## Results
 
@@ -71,9 +84,11 @@ size: 197x206 = 40,582, 287x287 = 82,369, 107x124 = 13,268 rows. The choice matt
 to 46.
 
 This deliberately models **full pairing**: every mentee is paired and mentors are
-duplicated as needed, with no two-mentee cap. The production system this analysis is
-modelled on did cap mentors and did leave some mentees unmatched. A mentor holding more
-than two mentees here is expected behaviour, not a defect.
+duplicated as needed, with no per-mentor cap. Full pairing is the simpler object to reason
+about statistically, because it removes the unmatched-mentee stratum: every mentee
+contributes to every rate reported here, and no result depends on a capacity rule that
+would have to be documented and defended separately. A mentor holding more than two
+mentees here is expected behaviour, not a defect.
 
 **A second denominator exists in the pipeline.** The pipeline's own `mentor_percentile`
 normalises by `max(assigned rank)` rather than by the pool size. That maximum is smaller
@@ -256,31 +271,41 @@ Treat the *u* = 0.9 column as a sensitivity check rather than a competing headli
 `FOSD_sup_CI_U` of 0.116 exceeds the 0.10 margin, so the selection routine and the gate
 table disagree about what passing means. See "Known issues" item 2.
 
-## Relation to the real-data analysis
+## Why some checks fail here
 
-Some checks fail here that pass on the real-employee data this repository models (Pack,
-Lo, Salami & Yao, 2026, in preparation for JSM 2026). The comparisons in this section rest
-on that paper, not on anything computable from this repository.
+Two of the three binding gates flag on these synthetic data. That is a property of this
+demonstration, not a finding about anything else, and it is worth being explicit about the
+mechanism rather than leaving a reader to guess at one.
 
 **Method equivalence.** The pooled 90% CI here is [+0.72, +5.77] pp, missing the ±5 pp
-margin by 0.77 pp at the upper end. On the real data the same test yields [−1.5, +2.5] pp,
-inside the margin. Both the synthetic and real point estimates are small; the synthetic
-interval is wider and, unlike the real one, excludes zero.
+margin by 0.77 pp at the upper end. The point estimate of +3.21 pp is comfortably inside
+the margin; the interval is what misses it, so this is a precision result at n = 591 rather
+than a large measured difference.
 
-**Mean percentile gap.** The −2.00 pp advantage to senior mentees here (90% CI
-[−3.62, −0.25], |SMD| = 0.119) is *smaller* in magnitude than the corresponding real-data
-gap, which runs near −3.5 pp with |SMD| 0.22 to 0.25 (Pack et al. 2026). De-identification
-did not amplify the grade effect. The synthetic gap flags because its interval is wide
-relative to a ±3 pp margin, not because the underlying disparity grew.
+**Mean percentile gap.** The −2.00 pp advantage to senior mentees (90% CI [−3.62, −0.25],
+|SMD| = 0.119) flags for the same reason: the point estimate sits inside the ±3 pp margin
+and only the lower interval bound crosses it. |SMD| = 0.119 is well under the 0.30
+supportive threshold, and Fisher's exact test returns p = 0.169.
 
 Neither result points to a defect in the algorithm or the methodology. Both follow from
-testing modest effects against tight margins on a cohort of 591. The disclosures here
-follow the same convention as the real-data analysis: the gaps are stated and not softened.
+testing modest effects against tight margins on a cohort of 591 — the situation Lo, Datta
+& Salami (2025) describe when a metric sits near its decision boundary, and the situation
+the [companion power demonstration](https://github.com/RickPack/gale-shapley-fair-matching-demo#the-verdict-flips-as-the-cohort-shrinks)
+isolates by holding everything but the cohort size fixed. The reporting convention is the
+one that matters here: the gaps are stated and not softened.
+
+A separate methods paper (Pack, Lo, Salami & Yao, 2026, in preparation for JSM 2026)
+describes the underlying approach. **No result from that paper is reproduced, quoted, or
+compared against here**, and nothing in this repository should be read as evidence about
+the data behind it.
 
 ## Data provenance
 
-All inputs are synthetic. Three scripts stand between the original workbooks and the
-committed `data/*.csv`: [`build_synthetic_inputs.R`](docs/DATA_PROVENANCE.md#build_synthetic_inputsr)
+All inputs are synthetic. Generation ran once, on a machine holding the restricted source
+workbooks, and those workbooks are not in this repository and are not reachable from it.
+The three generation scripts are published for auditability — so a reader can check what
+was removed and how — not so the generation can be repeated:
+[`build_synthetic_inputs.R`](docs/DATA_PROVENANCE.md#build_synthetic_inputsr)
 replaces names, IDs, and free text with generated substitutes and discards the mapping;
 [`scrub_org_fields.R`](docs/DATA_PROVENANCE.md#scrub_org_fieldsr) randomises the
 organisational structure that survived the first pass; and
@@ -311,10 +336,11 @@ tokens across 3,647 distinct synthetic words, frequencies 1 to 4,483. The 53 mos
 are drawn; the complete table is
 [`artifacts/wordcloud_token_frequencies.csv`](artifacts/wordcloud_token_frequencies.csv).
 
-**The confidential source workbooks are not in this repository and are not needed to
-reproduce anything below.** `.gitignore` excludes `source_workbooks/` and
-`GS_SOURCE_ROOT/`; the pipeline reads the committed `data/*.csv` unless `GS_SOURCE_ROOT`
-is set explicitly.
+**The restricted source workbooks are not in this repository, are not referenced by any
+committed path, and are not needed to reproduce anything below.** `.gitignore` excludes
+`source_workbooks/` and `GS_SOURCE_ROOT/`; the pipeline reads the committed `data/*.csv`
+and never looks anywhere else unless a reader deliberately sets `GS_SOURCE_ROOT` to
+something of their own.
 
 ## Reproducing every number
 
@@ -393,7 +419,7 @@ without its sample size is incomplete.
 | Path | What it is |
 |---|---|
 | `data/*.csv` | Synthetic surveys 2023-2025 and prior-year matches 2022-2024. The only inputs. |
-| `build_synthetic_inputs.R` | Builds synthetic CSVs from original workbooks. Needs `GS_SOURCE_ROOT`. |
+| `build_synthetic_inputs.R` | The generation script, published so the de-identification is auditable. Ran once against restricted inputs held outside this repository; not re-runnable from here. |
 | `scrub_org_fields.R` | Randomises group and unit affiliation so no real org structure survives. |
 | `repair_synthetic_vocabulary.R` | Relabels digit-bearing overflow tokens the scorer would otherwise collapse. |
 | `stable_matching_paper_synthetic.rmd` | De-identified analysis, rendered once per year and *u*. |

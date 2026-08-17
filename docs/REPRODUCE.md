@@ -20,13 +20,15 @@ the fairness table are identical across runs. That covers the analysis layer giv
 `.rds` inputs. It does not re-render the Rmd, so it will not detect a change in the
 rendering step; the caching note above is the relevant safeguard there.
 
-## Rebuilding from source workbooks
+## How the synthetic CSVs were generated
 
-**Not possible from this repository alone.** Set `GS_SOURCE_ROOT` to the folder holding
-the original workbooks and run `build_synthetic_inputs.R`, then `scrub_org_fields.R`, then
-`repair_synthetic_vocabulary.R`, in that order (see
-[`DATA_PROVENANCE.md`](DATA_PROVENANCE.md) for what each script does). Without that
-variable the pipeline uses the committed CSVs and never touches the source workbooks.
+**Not repeatable from this repository, by design.** The generation chain is
+`build_synthetic_inputs.R`, then `scrub_org_fields.R`, then
+`repair_synthetic_vocabulary.R` (see [`DATA_PROVENANCE.md`](DATA_PROVENANCE.md) for what
+each script does). It ran once, against restricted inputs held outside this repository,
+and its output is what `data/*.csv` contains. The scripts are published so the
+de-identification can be read and checked, not so it can be re-run. Nothing in the
+analysis path touches anything but the committed CSVs.
 
 ## Environment
 
