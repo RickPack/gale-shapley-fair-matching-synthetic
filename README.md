@@ -1,5 +1,7 @@
 # Gale-Shapley mentorship matching: a synthetic, reproducible demonstration
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A reproducible Gale-Shapley mentorship-pairing analysis built entirely on synthetic data.
 The pipeline matches synthetic mentees to mentors under two text-similarity scoring
 methods (Cosine Similarity and Matching Words), measures each against a random-matching
@@ -157,7 +159,7 @@ Salami describe when a metric sits near its decision boundary.
 
 The pooled interval is the one worth naming: [+0.72, +5.77] pp excludes zero, so across the
 three years combined Cosine Similarity selected top-20% mentors at a reliably higher rate
-than Matching Words. No individual year does — each single-year interval covers zero, and
+than Matching Words. No individual year does: each single-year interval covers zero, and
 the largest single-year gap, 2025's +6.54 pp, carries an interval half again as wide as the
 pooled one. Pooling buys the precision that separates the methods; it does not create the
 difference.
@@ -172,7 +174,7 @@ under both methods, so the two arms are positively correlated. Lo, Datta & Salam
 Eqs. (5)-(6), give an independent-samples Wald standard error, which assumes two separate
 groups and therefore overstates the width here. `build_method_tost_table()` in
 `run_all_synthetic.r` uses the paired score interval of Tango (1998) instead, via
-`PropCIs::scoreci.mp` on the discordant pairs — 50 mentees selected under Cosine Similarity
+`PropCIs::scoreci.mp` on the discordant pairs: 50 mentees selected under Cosine Similarity
 only, 31 under Matching Words only, 468 under both. The independent formula would report
 [−0.10, +6.53] pp on the same data against the paired [+0.72, +5.77] pp, an SE of 0.0201
 against 0.0152. The ±5 pp verdict is Fail either way, so the conclusion is unchanged; the
@@ -272,37 +274,24 @@ follow the same convention as the real-data analysis: the gaps are stated and no
 ## Data provenance
 
 All inputs are synthetic. Three scripts stand between the original workbooks and the
-committed `data/*.csv`, and each removes a different kind of information.
+committed `data/*.csv`: [`build_synthetic_inputs.R`](docs/DATA_PROVENANCE.md#build_synthetic_inputsr)
+replaces names, IDs, and free text with generated substitutes and discards the mapping;
+[`scrub_org_fields.R`](docs/DATA_PROVENANCE.md#scrub_org_fieldsr) randomises the
+organisational structure that survived the first pass; and
+[`repair_synthetic_vocabulary.R`](docs/DATA_PROVENANCE.md#repair_synthetic_vocabularyr)
+fixes a vocabulary defect described below. Full mechanism, script by script, in
+[`docs/DATA_PROVENANCE.md`](docs/DATA_PROVENANCE.md).
 
-`build_synthetic_inputs.R` replaces names with `PERSON_####` labels, derives `CID####`
-identifiers from those labels, relabels business groups and units as `Practice Group NN`
-and `Business Unit NN` while preserving relative frequencies, and rewrites every free-text
-answer through a seeded, frequency-ordered substitution into a generated vocabulary. **The
-substitution map is discarded when the build finishes** (`rm(word_map)`), so the mapping
-cannot be run backwards.
-
-`scrub_org_fields.R` then removes the organisational structure that survived the first
-pass. Relabelling groups and units left the labels meaningless but the shape underneath
-intact: how many groups and units exist, the headcount distribution across them, and which
-participants share one. A generic label does not de-identify an org chart. The script
-reassigns every participant to a group and unit drawn uniformly at random from a fixed,
-arbitrary number of categories chosen in the script rather than derived from any source.
-Assignment is stable per participant across years, so the data stays internally coherent.
-Grade is deliberately retained, because it is the protected attribute the fairness analysis
-rests on and an ordinal band rather than an organisational identifier.
-
-`repair_synthetic_vocabulary.R` fixes a defect the first build introduced. The generated
+That defect is worth stating here because it explains the figure below. The generated
 vocabulary fell back to `sprintf("term%04d", i)` labels once its 900-item stem pool ran
 out, and the analysis scores text after stripping non-letters with
 `str_replace_all(toupper(x), "[^A-Z ]", "")`. That strip deleted the digits, so `term0001`,
-`term0002` and the rest all collapsed into a single word, `TERM`. In the shipped data that
-was 77.6% of all token mass and 2,748 of 3,647 distinct words folding into one. Every
-document became roughly three-quarters the same word, cosine similarity between any two
-sat near 0.99, and the text component stopped carrying information. The repair relabels the
-offending tokens with alphabetic-only names. That is a bijection on the vocabulary, so the
-document-term matrix is unchanged up to a permutation of its columns and every downstream
-statistic is what it would have been had the vocabulary never contained digits. The repair
-reads no original data.
+`term0002` and the rest all collapsed into a single word, `TERM`, 77.6% of all token mass
+and 2,748 of 3,647 distinct words. Every document became roughly three-quarters the same
+word, cosine similarity between any two sat near 0.99, and the text component stopped
+carrying information. `repair_synthetic_vocabulary.R` relabels the offending tokens with
+alphabetic-only names, a bijection on the vocabulary that reads no original data and
+leaves the document-term matrix unchanged up to a column permutation.
 
 The figure below shows what survives the whole process. The vocabulary is manufactured:
 compounds such as `effortapproach` and `contextfield` from a 900-item stem pool, then
@@ -353,69 +342,16 @@ Each script takes `--` arguments (input paths, seeds, output folders) and fails 
 named error when an input is missing. Run any of them with no arguments for the documented
 defaults.
 
-**Step 1 caches its renders.** `run_all_synthetic.r` skips any *u* whose `.rds` files
-already exist under `artifacts/u_*/`, which makes a re-run cheap but also means a change to
-the scoring formula will not propagate on its own. **Delete `artifacts/u_*/` before
-re-running after any edit to the scoring code** in `stable_matching_paper_synthetic.rmd`.
-Skipping that step silently mixes outputs from two different formulas.
-
-**Determinism.** `tests/run_checks.R` group G re-runs `analyze_match_quality.R` and
-`report_fairness_checks.R` and asserts that the headline table, the seeded benchmark, and
-the fairness table are identical across runs. That covers the analysis layer given fixed
-`.rds` inputs. It does not re-render the Rmd, so it will not detect a change in the
-rendering step; the cache note above is the relevant safeguard there.
-
-**To rebuild the synthetic CSVs from the original workbooks** (not possible from this
-repository alone), set `GS_SOURCE_ROOT` to the folder holding them and run
-`build_synthetic_inputs.R`, then `scrub_org_fields.R`, then
-`repair_synthetic_vocabulary.R`, in that order. Without that variable the pipeline uses the
-committed CSVs and never touches the source workbooks.
-
-### Environment
-
-| Component | Version |
-|---|---|
-| R | 4.6.1 (2026-06-24 ucrt) |
-| Pandoc | required by `rmarkdown::render`; the runner falls back to the RStudio-bundled copy |
-| dplyr / tidyr / purrr / tibble | 1.2.1 / 1.3.2 / 1.2.2 / 3.3.1 |
-| readr / stringr | 2.2.0 / 1.6.0 |
-| ggplot2 / ggpubr / scales | 4.0.3 / 1.0.0 / 1.4.0 |
-| ggwordcloud | 0.6.2 |
-| flextable / officer | 0.10.0 / 0.7.6 |
-| rmarkdown / knitr / kableExtra | 2.31 / 1.51 / 1.4.1 |
-| car / janitor / openxlsx / PropCIs | 3.1.5 / 2.2.1 / 4.2.8.1 / 0.3.0 |
-| jsonlite | 2.0.0 |
-
-Random number generation uses R's default Mersenne-Twister with
-`sample.kind = "Rejection"`, so results reproduce on R 3.6.0 and later.
-Regenerating under a different R build can move stored values in the last one or
-two significant digits. That is floating-point arithmetic, not the seed drifting,
-and every figure this README quotes is rounded far above it.
+Caching behaviour, determinism guarantees, the pinned R environment, and how to rebuild
+the synthetic CSVs from the original workbooks are documented in
+[`docs/REPRODUCE.md`](docs/REPRODUCE.md).
 
 ## Figures
 
-Both committed PNGs are generated by script and held to measurable standards rather than to
-judgement, because GitHub renders README images on both a light and a dark page.
-
-- **Colour-vision safe.** A single-hue sequential blue ramp for the word cloud, and blue
-  `#2a78d6` / orange `#d95926` for the two methods. Adjacent-pair separation is measured
-  under simulated deuteranopia and protanopia (Viénot, Brettel & Mollon 1999) in OKLab
-  x100, and every colour's contrast against the figure surface is checked.
-  `tools/check_palette.R` runs those gates and exits non-zero on failure. It caught and
-  rejected a lighter orange at 2.83:1.
-- **Legible on both GitHub themes.** The figure surface is a light neutral `#f2f1ec` rather
-  than pure white, with a hairline border so the card edge reads against a dark page. No
-  colour relies on the page background.
-- **Sized for the README column.** 8.9 in at 200 dpi = 1,780 px, displayed by GitHub at
-  roughly 890 px. Word-cloud words are cut off at the frequency where they would fall below
-  10 pt rather than at a round word count.
-- **Captions read their counts from the artifacts.** `make_match_quality_figure.R` builds
-  its caption from `match_quality_headline.csv` at render time, because a number typed into
-  a figure caption is the one stale number grep will not find.
-
-The pipeline's own diagnostic figures (cumulative gains, density plots, ECDF/FOSD, *u*
-sweeps) and its Word summaries are not committed. They predate these standards and
-regenerate from `run_all_synthetic.r`.
+Both committed PNGs are generated by script and held to measurable, colour-vision-safe
+standards rather than to judgement, because GitHub renders README images on both a light
+and a dark page. Palette, sizing, and caption-provenance rules are documented in
+[`docs/FIGURES.md`](docs/FIGURES.md); `tools/check_palette.R` enforces the colour gates.
 
 ## Statistical power and the boundary problem
 
@@ -463,6 +399,9 @@ without its sample size is incomplete.
 | `tests/run_checks.R` | 145 assertions across nine groups. |
 | `tools/check_palette.R` | Colour-vision and contrast gates for committed figures. |
 | `artifacts/` | Committed summary CSVs, the two figures, and pipeline Word tables. |
+| `docs/DATA_PROVENANCE.md` | De-identification chain, script by script. |
+| `docs/FIGURES.md` | Colour-vision, sizing, and caption-provenance standards for the two figures. |
+| `docs/REPRODUCE.md` | Caching, determinism, pinned environment, rebuilding from source workbooks. |
 
 ## Deviations from the published paper
 
@@ -498,9 +437,9 @@ does not reflect a change to the methodology described in the paper.
 ## Known issues and limitations
 
 1. **Fairness is not established.** Two of three binding gates flag, with a 2.00 pp
-   advantage to senior mentees on mean percentile. Both flags are precision results rather
-   than large measured disparities, which is a reason to withhold a fairness claim, not a
-   reason to discount them.
+   advantage to senior mentees on mean percentile (see "Predefined fairness checks" for
+   why that is a precision result, not a demonstrated disparity, and why it is still a
+   reason to withhold a fairness claim).
 2. **The *u* selection routine and the gate table disagree about what passing means.**
    `Proposed_u_decision.csv` marks the *u* = 0.9 row `passes_all = TRUE` while that same
    row's `FOSD_sup_CI_U` of 0.116 exceeds the 0.10 margin. The selector and the published
@@ -508,9 +447,6 @@ does not reflect a change to the methodology described in the paper.
    sensitivity check rather than a competing headline. The pipeline now reports that
    recommendation without acting on it (see below), so nothing published depends on the
    disagreement, but the two rules have not been reconciled.
-   Separately, `Proposed_u_decision.csv` marks *u* = 0.9 `passes_all = TRUE` while
-   recording `FOSD_sup_CI_U = 0.116` against a 0.10 margin, so the routine's pass rule
-   is not the gate table's pass rule.
 3. **The Disparate Impact gate is one-sided.** Lo, Datta & Salami test DI against a
    two-sided acceptable range (their §3.3, typically [0.80, 1.20] or [0.80, 1.25]). This
    pipeline gates on the 90% lower bound against a 0.80 floor only, so a DI above the upper
