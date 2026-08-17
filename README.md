@@ -186,6 +186,12 @@ estimates `(y - x)/n`, so producing the Cosine − Matching Words difference thi
 reports requires passing the discordant counts in the opposite order to the one the
 argument names suggest.
 
+A minimal, dependency-free implementation of this same interval, in Python, is in the
+[gale-shapley-fair-matching-demo](https://github.com/RickPack/gale-shapley-fair-matching-demo)
+repository: `tango_score_ci()` is pinned by a test that reproduces `PropCIs::scoreci.mp`
+to four decimals, so it is a smaller surface to read than `PropCIs` itself if the goal is
+to check the formula rather than run this pipeline.
+
 ### Predefined fairness checks
 
 Protected attribute: mentee grade, dichotomised by the pipeline into **Grades 1-4**
