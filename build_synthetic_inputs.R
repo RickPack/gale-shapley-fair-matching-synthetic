@@ -32,7 +32,7 @@ required_cols <- c(
   "what_are_your_strongest_skills_please_choose_your_top_3",
   "what_topics_are_you_knowledgeable_on_please_choose_your_top_3",
   "which_expectations_can_you_help_fulfill_please_choose_your_top_3",
-  "do_you_prefer_2_2_or_would_you_be_comfortable_mentoring_more_than_one_associate",
+  "do_you_prefer_2_2_or_would_you_be_comfortable_mentoring_more_than_one_person",
   "would_you_consider_yourself_an_extrovert_or_an_introvert",
   "which_personality_type_would_you_prefer_to_be_paired_with",
   "please_tell_us_in_your_own_words_why_you_want_to_be_a_mentor_what_are_your_expectations_and_intended_outcomes_please_provide_a_detailed_response_of_3_4_sentences",
