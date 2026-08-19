@@ -1,7 +1,8 @@
 # Data provenance
 
-Three scripts stand between the original workbooks and the committed `data/*.csv`, and
-each removes a different kind of information. See the main [README](../README.md) for
+Three scripts stood between the restricted source workbooks and the committed
+`data/*.csv`, and each removes a different kind of information. They ran once; what is
+committed here is their output. See the main [README](../README.md) for
 the resulting vocabulary-collapse defect and its fix.
 
 ## `build_synthetic_inputs.R`
@@ -42,6 +43,10 @@ never contained digits. The repair reads no original data.
 
 ## Confidentiality boundary
 
-**The confidential source workbooks are not in this repository and are not needed to
-reproduce anything.** `.gitignore` excludes `source_workbooks/` and `GS_SOURCE_ROOT/`;
-the pipeline reads the committed `data/*.csv` unless `GS_SOURCE_ROOT` is set explicitly.
+**The restricted source workbooks are not in this repository, are not referenced by any
+committed path, and are not needed to reproduce anything.** `.gitignore` excludes
+`source_workbooks/` and `GS_SOURCE_ROOT/`; the pipeline reads the committed `data/*.csv`
+and never looks anywhere else unless a reader deliberately sets `GS_SOURCE_ROOT` to
+something of their own. The three scripts above ran once, on a machine holding those
+inputs, and are published here so that the de-identification can be audited rather than
+so that it can be repeated.

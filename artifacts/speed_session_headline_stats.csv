@@ -1,9 +1,9 @@
 year,method,n_mentees,pct_top20,pct_rank1_mentor,mean_percentile
-2023,Cosine Similarity,197,84.8,24.4,9.67
-2023,Matching Words,197,82.7,15.2,11.33
-2024,Cosine Similarity,287,89.5,26.1,7.97
-2024,Matching Words,287,86.8,17.4,8.5
-2025,Cosine Similarity,107,87.9,30.8,9.48
-2025,Matching Words,107,81.3,23.4,12.46
-Overall,Cosine Similarity,591,87.6,26.4,8.81
-Overall,Matching Words,591,84.4,17.8,10.16
+2023,Cosine Similarity,173,82.7,26,11.1
+2023,Matching Words,173,82.1,18.5,11.25
+2024,Cosine Similarity,276,89.9,26.8,8.02
+2024,Matching Words,276,88.4,16.3,8.98
+2025,Cosine Similarity,100,76,30,13.86
+2025,Matching Words,100,74,23,15.74
+Overall,Cosine Similarity,549,85.1,27.1,10.06
+Overall,Matching Words,549,83.8,18.2,10.93
