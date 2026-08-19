@@ -527,6 +527,13 @@ does not reflect a change to the methodology described in the paper.
   problem for paired binary outcomes.
 - EEOC Uniform Guidelines on Employee Selection Procedures, the four-fifths rule.
 
+## Acknowledgments
+
+The survey instrument and mentorship program design that this synthetic pipeline models
+were developed by Chasity Holt and Cynthia Turner. Their work shaped the
+structured-response schema and the free-text questions that appear here in synthetic
+form. No data they collected appears in this repository.
+
 ## Licence
 
 See [`LICENSE`](LICENSE).
